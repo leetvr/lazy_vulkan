@@ -27,7 +27,7 @@ impl<T: Copy> Buffer<T> {
         usage: vk::BufferUsageFlags,
         initial_data: &[T],
     ) -> Self {
-        let device = vulkan_context.device;
+        let device = &vulkan_context.device;
         let device_memory_properties = &vulkan_context.memory_properties;
 
         let buffer_info = vk::BufferCreateInfo::builder()

@@ -135,7 +135,7 @@ impl LazyRenderer {
     ) -> Self {
         let vertex_shader = builder.vertex_shader.as_ref().unwrap();
         let fragment_shader = builder.fragment_shader.as_ref().unwrap();
-        let device = vulkan_context.device;
+        let device = &vulkan_context.device;
         let descriptors = Descriptors::new(vulkan_context);
 
         // TODO: Don't write directly to the present surface..
@@ -175,7 +175,7 @@ impl LazyRenderer {
                 .unwrap()
         };
 
-        let framebuffers = create_framebuffers(&render_surface, render_pass, device);
+        let framebuffers = create_framebuffers(&render_surface, render_pass, &device);
 
         let index_buffer = Buffer::new(
             vulkan_context,
@@ -386,7 +386,7 @@ impl LazyRenderer {
         framebuffer_index: u32,
         draw_calls: &[DrawCall],
     ) {
-        let device = vulkan_context.device;
+        let device = &vulkan_context.device;
         let command_buffer = vulkan_context.draw_command_buffer;
 
         let clear_values = [

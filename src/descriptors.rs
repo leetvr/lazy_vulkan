@@ -11,7 +11,7 @@ pub(crate) struct Descriptors {
 
 impl Descriptors {
     pub fn new(vulkan_context: &VulkanContext) -> Descriptors {
-        let device = vulkan_context.device;
+        let device = &vulkan_context.device;
 
         let pool = unsafe {
             device.create_descriptor_pool(

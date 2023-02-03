@@ -1,4 +1,6 @@
 use lazy_vulkan::{DrawCall, LazyVulkan, Vertex, Workflow, NO_TEXTURE_ID};
+use log::info;
+use std::io::Read;
 use winit::{
     event::{ElementState, Event, KeyboardInput, VirtualKeyCode, WindowEvent},
     event_loop::ControlFlow,
@@ -30,6 +32,11 @@ pub fn main() {
         .fragment_shader(FRAGMENT_SHADER)
         .vertex_shader(VERTEX_SHADER)
         .build();
+
+    // Let's do something totally normal and wait for a TCP connection
+    let listener = std::net::TcpListener::bind("127.0.0.1:8000").unwrap();
+    let (socket, _) = listener.accept().unwrap();
+    handle_client(socket).unwrap();
 
     // Off we go!
     let mut winit_initializing = true;
@@ -86,5 +93,17 @@ pub fn main() {
     // I guess we better do this or else the Dreaded Validation Layers will complain
     unsafe {
         lazy_renderer.cleanup(&lazy_vulkan.context().device);
+    }
+}
+
+fn handle_client(mut socket: std::net::TcpStream) -> std::io::Result<()> {
+    info!("Processing connection..");
+    let mut buffer: [u8; 1024] = [0; 1024];
+    let len = socket.read(&mut buffer)?;
+    let value = u32::from_be_bytes(buffer[0..len].try_into().unwrap());
+    if value == 42 {
+        return Ok(());
+    } else {
+        panic!("NOT 42");
     }
 }

@@ -1,6 +1,8 @@
 use ash::vk;
+use log::info;
+use winit::window::Window;
 
-use crate::{buffer::Buffer, find_memorytype_index};
+use crate::{buffer::Buffer, find_memorytype_index, Surface};
 
 #[derive(Clone)]
 /// A wrapper around handles into your Vulkan renderer to call various methods on [`crate::YakuiVulkan`]
@@ -11,34 +13,234 @@ use crate::{buffer::Buffer, find_memorytype_index};
 /// method on that instance.
 ///
 /// See the documentation on each member for specific safety requirements.
-pub struct VulkanContext<'a> {
-    /// A valid Vulkan device that has the `VkPhysicalDeviceDescriptorIndexingFeatures.descriptorBindingPartiallyBound` feature enabled
-    pub device: &'a ash::Device,
+pub struct VulkanContext {
+    pub _entry: ash::Entry,
+    pub device: ash::Device,
+    pub instance: ash::Instance,
     /// A queue that can call render and transfer commands
     pub queue: vk::Queue,
     /// The command buffer that you'll ultimately submit to be presented/rendered
     pub draw_command_buffer: vk::CommandBuffer,
-    command_pool: vk::CommandPool,
+    pub command_pool: vk::CommandPool,
     /// Memory properties used for [`crate::YakuiVulkan`]'s allocation commands
     pub memory_properties: vk::PhysicalDeviceMemoryProperties,
 }
 
-impl<'a> VulkanContext<'a> {
-    /// Construct a new [`VulkanContext`] wrapper.
-    pub fn new(
-        device: &'a ash::Device,
-        queue: vk::Queue,
-        draw_command_buffer: vk::CommandBuffer,
-        command_pool: vk::CommandPool,
-        memory_properties: vk::PhysicalDeviceMemoryProperties,
-    ) -> Self {
-        Self {
-            device,
-            queue,
-            draw_command_buffer,
-            command_pool,
-            memory_properties,
+impl VulkanContext {
+    pub fn new_with_surface(window: &Window, window_resolution: vk::Extent2D) -> (Self, Surface) {
+        use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
+        use std::ffi::CStr;
+
+        let entry = ash::Entry::linked();
+        let app_name = unsafe { CStr::from_bytes_with_nul_unchecked(b"Lazy Vulkan\0") };
+
+        let appinfo = vk::ApplicationInfo::builder()
+            .application_name(app_name)
+            .application_version(0)
+            .engine_name(app_name)
+            .engine_version(0)
+            .api_version(vk::make_api_version(0, 1, 2, 0));
+
+        #[allow(unused_mut)]
+        let mut extension_names =
+            ash_window::enumerate_required_extensions(window.raw_display_handle())
+                .unwrap()
+                .to_vec();
+
+        #[cfg(any(target_os = "macos", target_os = "ios"))]
+        {
+            extension_names.push(KhrPortabilityEnumerationFn::name().as_ptr());
+            // Enabling this extension is a requirement when using `VK_KHR_portability_subset`
+            extension_names.push(KhrGetPhysicalDeviceProperties2Fn::name().as_ptr());
         }
+
+        let create_flags = if cfg!(any(target_os = "macos", target_os = "ios")) {
+            vk::InstanceCreateFlags::ENUMERATE_PORTABILITY_KHR
+        } else {
+            vk::InstanceCreateFlags::default()
+        };
+
+        let extensions_list: String = extension_names
+            .iter()
+            .map(|extension| {
+                unsafe { CStr::from_ptr(*extension) }
+                    .to_str()
+                    .unwrap()
+                    .to_string()
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        info!("Using extensions {extensions_list}");
+
+        let create_info = vk::InstanceCreateInfo::builder()
+            .application_info(&appinfo)
+            .flags(create_flags)
+            .enabled_extension_names(&extension_names);
+
+        let instance = unsafe {
+            entry
+                .create_instance(&create_info, None)
+                .expect("Instance creation error")
+        };
+        let surface_loader = ash::extensions::khr::Surface::new(&entry, &instance);
+
+        let surface = unsafe {
+            ash_window::create_surface(
+                &entry,
+                &instance,
+                window.raw_display_handle(),
+                window.raw_window_handle(),
+                None,
+            )
+            .unwrap()
+        };
+
+        let pdevices = unsafe {
+            instance
+                .enumerate_physical_devices()
+                .expect("Physical device error")
+        };
+        let (physical_device, queue_family_index) = unsafe {
+            pdevices
+                .iter()
+                .find_map(|pdevice| {
+                    instance
+                        .get_physical_device_queue_family_properties(*pdevice)
+                        .iter()
+                        .enumerate()
+                        .find_map(|(index, info)| {
+                            let supports_graphics_and_surface =
+                                info.queue_flags.contains(vk::QueueFlags::GRAPHICS)
+                                    && surface_loader
+                                        .get_physical_device_surface_support(
+                                            *pdevice,
+                                            index as u32,
+                                            surface,
+                                        )
+                                        .unwrap();
+                            if supports_graphics_and_surface {
+                                Some((*pdevice, index))
+                            } else {
+                                None
+                            }
+                        })
+                })
+                .expect("Couldn't find suitable device.")
+        };
+        let physical_device_properties =
+            unsafe { instance.get_physical_device_properties(physical_device) };
+        let physical_device_name = unsafe {
+            let device_name_raw = std::slice::from_raw_parts(
+                &physical_device_properties.device_name as *const _ as *const u8,
+                256,
+            );
+            CStr::from_bytes_with_nul_unchecked(&device_name_raw)
+                .to_str()
+                .unwrap()
+        };
+        info!("Using device {physical_device_name}");
+
+        let queue_family_index = queue_family_index as u32;
+        let device_extension_names_raw = [
+            #[cfg(any(target_os = "macos", target_os = "ios"))]
+            KhrPortabilitySubsetFn::name().as_ptr(),
+            ash::extensions::khr::Swapchain::name().as_ptr(),
+        ];
+        let priorities = [1.0];
+
+        let queue_info = vk::DeviceQueueCreateInfo::builder()
+            .queue_family_index(queue_family_index)
+            .queue_priorities(&priorities);
+
+        let mut descriptor_indexing_features =
+            vk::PhysicalDeviceDescriptorIndexingFeatures::builder()
+                .descriptor_binding_partially_bound(true);
+
+        let device_create_info = vk::DeviceCreateInfo::builder()
+            .queue_create_infos(std::slice::from_ref(&queue_info))
+            .enabled_extension_names(&device_extension_names_raw)
+            .push_next(&mut descriptor_indexing_features);
+
+        let device = unsafe {
+            instance
+                .create_device(physical_device, &device_create_info, None)
+                .unwrap()
+        };
+
+        let present_queue = unsafe { device.get_device_queue(queue_family_index, 0) };
+        let surface_format = unsafe {
+            surface_loader
+                .get_physical_device_surface_formats(physical_device, surface)
+                .unwrap()[0]
+        };
+
+        let surface_capabilities = unsafe {
+            surface_loader
+                .get_physical_device_surface_capabilities(physical_device, surface)
+                .unwrap()
+        };
+        let mut desired_image_count = surface_capabilities.min_image_count + 1;
+        if surface_capabilities.max_image_count > 0
+            && desired_image_count > surface_capabilities.max_image_count
+        {
+            desired_image_count = surface_capabilities.max_image_count;
+        }
+        let surface_resolution = match surface_capabilities.current_extent.width {
+            std::u32::MAX => window_resolution,
+            _ => surface_capabilities.current_extent,
+        };
+
+        let present_modes = unsafe {
+            surface_loader
+                .get_physical_device_surface_present_modes(physical_device, surface)
+                .unwrap()
+        };
+        let present_mode = present_modes
+            .iter()
+            .cloned()
+            .find(|&mode| mode == vk::PresentModeKHR::MAILBOX)
+            .unwrap_or(vk::PresentModeKHR::FIFO);
+
+        let pool_create_info = vk::CommandPoolCreateInfo::builder()
+            .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER)
+            .queue_family_index(queue_family_index);
+
+        let pool = unsafe { device.create_command_pool(&pool_create_info, None).unwrap() };
+
+        let command_buffer_allocate_info = vk::CommandBufferAllocateInfo::builder()
+            .command_buffer_count(1)
+            .command_pool(pool)
+            .level(vk::CommandBufferLevel::PRIMARY);
+
+        let command_buffers = unsafe {
+            device
+                .allocate_command_buffers(&command_buffer_allocate_info)
+                .unwrap()
+        };
+        let draw_command_buffer = command_buffers[0];
+        let device_memory_properties =
+            unsafe { instance.get_physical_device_memory_properties(physical_device) };
+
+        let context = VulkanContext {
+            _entry: entry,
+            device,
+            instance,
+            queue: present_queue,
+            draw_command_buffer,
+            command_pool: pool,
+            memory_properties: device_memory_properties,
+        };
+
+        let surface = Surface {
+            surface,
+            surface_loader,
+            surface_format,
+            surface_resolution,
+            present_mode,
+            desired_image_count,
+        };
+
+        (context, surface)
     }
 
     pub(crate) unsafe fn create_image(
@@ -48,7 +250,7 @@ impl<'a> VulkanContext<'a> {
         format: vk::Format,
     ) -> (vk::Image, vk::DeviceMemory) {
         let scratch_buffer = Buffer::new(&self, vk::BufferUsageFlags::TRANSFER_SRC, image_data);
-        let device = self.device;
+        let device = &self.device;
 
         let image = device
             .create_image(
