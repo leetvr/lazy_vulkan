@@ -18,10 +18,10 @@
 use crate::buffer::Buffer;
 use crate::descriptors::Descriptors;
 use crate::vulkan_context::VulkanContext;
+use crate::vulkan_texture::VulkanTexture;
 use crate::vulkan_texture::VulkanTextureCreateInfo;
-use crate::vulkan_texture::{VulkanTexture, NO_TEXTURE_ID};
-use crate::Vertex;
-use std::{collections::HashMap, ffi::CStr, io::Cursor};
+use crate::{LazyVulkanBuilder, Vertex};
+use std::{ffi::CStr, io::Cursor};
 
 use ash::{util::read_spv, vk};
 use bytemuck::{Pod, Zeroable};
@@ -54,8 +54,6 @@ pub struct LazyRenderer {
     index_buffer: Buffer<u32>,
     /// A single vertex buffer, shared between all draw calls
     vertex_buffer: Buffer<crate::Vertex>,
-    /// Have we synced the first textures from yakui?
-    initial_textures_synced: bool,
     /// Textures owned by the user
     user_textures: thunderdome::Arena<VulkanTexture>,
     /// A wrapper around descriptor set functionality
@@ -132,10 +130,11 @@ impl LazyRenderer {
     /// - the members of `render_surface` must have been created with the same [`ash::Device`] as `vulkan_context`.
     pub fn new(
         vulkan_context: &VulkanContext,
-        vertex_shader: &[u8],
-        fragment_shader: &[u8],
         render_surface: RenderSurface,
+        builder: &LazyVulkanBuilder,
     ) -> Self {
+        let vertex_shader = builder.vertex_shader.as_ref().unwrap();
+        let fragment_shader = builder.fragment_shader.as_ref().unwrap();
         let device = vulkan_context.device;
         let descriptors = Descriptors::new(vulkan_context);
 
@@ -178,8 +177,16 @@ impl LazyRenderer {
 
         let framebuffers = create_framebuffers(&render_surface, render_pass, device);
 
-        let index_buffer = Buffer::new(vulkan_context, vk::BufferUsageFlags::INDEX_BUFFER, &[]);
-        let vertex_buffer = Buffer::new(vulkan_context, vk::BufferUsageFlags::VERTEX_BUFFER, &[]);
+        let index_buffer = Buffer::new(
+            vulkan_context,
+            vk::BufferUsageFlags::INDEX_BUFFER,
+            &builder.initial_indices,
+        );
+        let vertex_buffer = Buffer::new(
+            vulkan_context,
+            vk::BufferUsageFlags::VERTEX_BUFFER,
+            &builder.initial_vertices,
+        );
 
         let mut vertex_spv_file = Cursor::new(vertex_shader);
         let mut frag_spv_file = Cursor::new(fragment_shader);
@@ -246,19 +253,19 @@ impl LazyRenderer {
             vk::VertexInputAttributeDescription {
                 location: 0,
                 binding: 0,
-                format: vk::Format::R32G32_SFLOAT,
+                format: vk::Format::R32G32B32A32_SFLOAT,
                 offset: bytemuck::offset_of!(Vertex, position) as _,
             },
             // color
             vk::VertexInputAttributeDescription {
-                location: 2,
+                location: 1,
                 binding: 0,
                 format: vk::Format::R32G32B32A32_SFLOAT,
                 offset: bytemuck::offset_of!(Vertex, colour) as _,
             },
             // UV / texcoords
             vk::VertexInputAttributeDescription {
-                location: 1,
+                location: 2,
                 binding: 0,
                 format: vk::Format::R32G32_SFLOAT,
                 offset: bytemuck::offset_of!(Vertex, uv) as _,
@@ -369,7 +376,6 @@ impl LazyRenderer {
             index_buffer,
             vertex_buffer,
             user_textures: Default::default(),
-            initial_textures_synced: false,
         }
     }
 

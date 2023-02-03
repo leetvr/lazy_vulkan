@@ -4,8 +4,6 @@ mod lazy_renderer;
 mod vulkan_context;
 mod vulkan_texture;
 
-use std::ffi::CString;
-
 use ash::vk;
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
@@ -15,12 +13,7 @@ use ash::vk::{
 use glam::{Vec2, Vec4};
 pub use lazy_renderer::{DrawCall, LazyRenderer, Workflow};
 use log::info;
-use winit::{
-    dpi::PhysicalSize,
-    event::{ElementState, Event, KeyboardInput, VirtualKeyCode},
-    event_loop::ControlFlow,
-    platform::run_return::EventLoopExtRunReturn,
-};
+use winit::{event_loop::EventLoop, window::Window};
 
 pub use crate::vulkan_texture::NO_TEXTURE_ID;
 use crate::{lazy_renderer::RenderSurface, vulkan_context::VulkanContext};
@@ -86,8 +79,15 @@ impl LazyVulkanBuilder {
         self
     }
 
-    pub fn build(self) -> LazyVulkan {
-        LazyVulkan::new(self)
+    pub fn build<'a>(self) -> (LazyVulkan, LazyRenderer, EventLoop<()>) {
+        let (width, height) = (500, 500);
+        let (event_loop, window) = init_winit(width, height);
+        let window_resolution = vk::Extent2D { width, height };
+
+        let (vulkan, render_surface) = LazyVulkan::new(window, window_resolution);
+        let renderer = LazyRenderer::new(&vulkan.context(), render_surface, &self);
+
+        (vulkan, renderer, event_loop)
     }
 }
 
@@ -95,12 +95,10 @@ pub struct LazyVulkan {
     pub _entry: ash::Entry,
     pub device: ash::Device,
     pub window: winit::window::Window,
-    pub event_loop: std::cell::RefCell<winit::event_loop::EventLoop<()>>,
     pub instance: ash::Instance,
     pub surface_loader: ash::extensions::khr::Surface,
     pub device_memory_properties: vk::PhysicalDeviceMemoryProperties,
     pub present_queue: vk::Queue,
-    renderer: LazyRenderer,
 
     pub surface: vk::SurfaceKHR,
     pub swapchain_info: SwapchainInfo,
@@ -121,98 +119,19 @@ impl LazyVulkan {
         Default::default()
     }
 
-    pub fn run<F: Fn()>(&self, f: F) {
-        use winit::event::WindowEvent;
-
-        let mut winit_initializing = false;
-        self.event_loop
-            .borrow_mut()
-            .run_return(|event, _, control_flow| {
-                *control_flow = ControlFlow::Poll;
-                match event {
-                    Event::WindowEvent {
-                        event:
-                            WindowEvent::CloseRequested
-                            | WindowEvent::KeyboardInput {
-                                input:
-                                    KeyboardInput {
-                                        state: ElementState::Pressed,
-                                        virtual_keycode: Some(VirtualKeyCode::Escape),
-                                        ..
-                                    },
-                                ..
-                            },
-                        ..
-                    } => *control_flow = ControlFlow::Exit,
-
-                    Event::NewEvents(cause) => {
-                        if cause == winit::event::StartCause::Init {
-                            winit_initializing = true;
-                        } else {
-                            winit_initializing = false;
-                        }
-                    }
-
-                    Event::MainEventsCleared => {
-                        f();
-                    }
-                    Event::WindowEvent {
-                        event: WindowEvent::Resized(size),
-                        ..
-                    } => {
-                        // if winit_initializing {
-                        //     println!("Ignoring resize during init!");
-                        // } else {
-                        //     let PhysicalSize { width, height } = size;
-                        //     let render_surface = self.resized(width, height);
-                        //     self.renderer.update_surface(render_surface, &self.device);
-                        // }
-                    }
-                    Event::WindowEvent {
-                        event:
-                            WindowEvent::KeyboardInput {
-                                input:
-                                    KeyboardInput {
-                                        state: ElementState::Released,
-                                        virtual_keycode,
-                                        ..
-                                    },
-                                ..
-                            },
-                        ..
-                    } => match virtual_keycode {
-                        Some(VirtualKeyCode::A) => {}
-                        _ => {}
-                    },
-                    _ => (),
-                }
-            });
-
-        unsafe {
-            self.renderer.cleanup(&self.device);
-        }
-    }
-
-    pub fn draw(&self, draw_calls: &[DrawCall]) {
-        let framebuffer_index = self.render_begin();
-        let vulkan_context = VulkanContext::new(
+    pub fn context(&self) -> VulkanContext {
+        VulkanContext::new(
             &self.device,
             self.present_queue,
             self.draw_command_buffer,
             self.command_pool,
             self.device_memory_properties,
-        );
-
-        self.renderer
-            .render(&vulkan_context, framebuffer_index, draw_calls);
-        self.render_end(framebuffer_index);
+        )
     }
 
     /// Bring up all the Vulkan pomp and ceremony required to render things.
     /// Vulkan Broadly lifted from: https://github.com/ash-rs/ash/blob/0.37.2/examples/src/lib.rs
-    fn new(builder: LazyVulkanBuilder) -> Self {
-        let (width, height) = (500, 500);
-        let (event_loop, window) = init_winit(width, height);
+    fn new(window: Window, window_resolution: vk::Extent2D) -> (Self, RenderSurface) {
         use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
         use std::ffi::CStr;
 
@@ -226,6 +145,7 @@ impl LazyVulkan {
             .engine_version(0)
             .api_version(vk::make_api_version(0, 1, 2, 0));
 
+        #[allow(unused_mut)]
         let mut extension_names =
             ash_window::enumerate_required_extensions(window.raw_display_handle())
                 .unwrap()
@@ -370,7 +290,7 @@ impl LazyVulkan {
             desired_image_count = surface_capabilities.max_image_count;
         }
         let surface_resolution = match surface_capabilities.current_extent.width {
-            std::u32::MAX => vk::Extent2D { width, height },
+            std::u32::MAX => window_resolution,
             _ => surface_capabilities.current_extent,
         };
 
@@ -445,49 +365,33 @@ impl LazyVulkan {
         let device_memory_properties =
             unsafe { instance.get_physical_device_memory_properties(physical_device) };
 
-        let vulkan_context = VulkanContext::new(
-            &device,
-            present_queue,
-            draw_command_buffer,
-            pool,
-            device_memory_properties,
-        );
-
         let render_surface = RenderSurface {
             resolution: surface_resolution,
             format: surface_format.format,
             image_views: present_image_views,
         };
 
-        let renderer = LazyRenderer::new(
-            &vulkan_context,
-            &builder.vertex_shader.expect("No vertex shader specified"),
-            &builder
-                .fragment_shader
-                .expect("No fragment shader specified"),
+        (
+            Self {
+                window,
+                device,
+                present_queue,
+                _entry: entry,
+                instance,
+                surface_loader,
+                swapchain_info,
+                device_memory_properties,
+                surface,
+                swapchain,
+                command_pool: pool,
+                draw_command_buffer,
+                present_complete_semaphore,
+                rendering_complete_semaphore,
+                draw_commands_reuse_fence,
+                setup_commands_reuse_fence,
+            },
             render_surface,
-        );
-
-        Self {
-            window,
-            event_loop: std::cell::RefCell::new(event_loop),
-            device,
-            renderer,
-            present_queue,
-            _entry: entry,
-            instance,
-            surface_loader,
-            swapchain_info,
-            device_memory_properties,
-            surface,
-            swapchain,
-            command_pool: pool,
-            draw_command_buffer,
-            present_complete_semaphore,
-            rendering_complete_semaphore,
-            draw_commands_reuse_fence,
-            setup_commands_reuse_fence,
-        }
+        )
     }
 
     pub fn resized(&mut self, window_width: u32, window_height: u32) -> RenderSurface {
@@ -515,7 +419,6 @@ impl LazyVulkan {
     }
 
     unsafe fn destroy_swapchain(&self, swapchain: vk::SwapchainKHR) {
-        let device = &self.device;
         self.swapchain_info
             .swapchain_loader
             .destroy_swapchain(swapchain, None);
