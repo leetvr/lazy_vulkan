@@ -365,6 +365,9 @@ fn create_device(
     #[cfg(target_os = "windows")]
     extension_names.push(ash::extensions::khr::ExternalMemoryWin32::name().as_ptr());
 
+    #[cfg(target_os = "windows")]
+    extension_names.push(ash::extensions::khr::ExternalSemaphoreWin32::name().as_ptr());
+
     let priorities = [1.0];
     let queue_info = vk::DeviceQueueCreateInfo::builder()
         .queue_family_index(queue_family_index)

@@ -271,7 +271,7 @@ impl LazyVulkan {
         present_index
     }
 
-    pub fn render_end(&self, present_index: u32) {
+    pub fn render_end(&self, present_index: u32, wait_semaphores: &[vk::Semaphore]) {
         let device = &self.context.device;
         unsafe {
             device
@@ -280,7 +280,7 @@ impl LazyVulkan {
             let swapchains = [self.swapchain];
             let image_indices = [present_index];
             let submit_info = vk::SubmitInfo::builder()
-                .wait_semaphores(std::slice::from_ref(&self.present_complete_semaphore))
+                .wait_semaphores(wait_semaphores)
                 .wait_dst_stage_mask(&[vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT])
                 .command_buffers(std::slice::from_ref(&self.context.draw_command_buffer))
                 .signal_semaphores(std::slice::from_ref(&self.rendering_complete_semaphore));

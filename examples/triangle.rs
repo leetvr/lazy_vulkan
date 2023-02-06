@@ -66,7 +66,8 @@ pub fn main() {
                     framebuffer_index,
                     &[DrawCall::new(0, 3, NO_TEXTURE_ID, Workflow::Main)],
                 );
-                lazy_vulkan.render_end(framebuffer_index);
+                lazy_vulkan
+                    .render_end(framebuffer_index, &[lazy_vulkan.present_complete_semaphore]);
             }
             Event::WindowEvent {
                 event: WindowEvent::Resized(size),

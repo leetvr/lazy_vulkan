@@ -50,14 +50,17 @@ pub fn main() {
         resolution: lazy_vulkan.surface.surface_resolution,
         format: SWAPCHAIN_FORMAT,
     };
-    let (images, memory_handles) =
+    let (images, image_memory_handles) =
         unsafe { create_render_images(lazy_vulkan.context(), &swapchain_info) };
+    let (semaphores, semaphore_handles) =
+        unsafe { create_semaphores(lazy_vulkan.context(), swapchain_info.image_count) };
     let textures = create_render_textures(lazy_vulkan.context(), &mut lazy_renderer, images);
     let (mut socket, _) = listener.accept().unwrap();
     info!("Client connected!");
     let mut buf: [u8; 1024] = [0; 1024];
     send_swapchain_info(&mut socket, &swapchain_info, &mut buf).unwrap();
-    send_memory_handles(&mut socket, memory_handles, &mut buf).unwrap();
+    send_image_memory_handles(&mut socket, image_memory_handles, &mut buf).unwrap();
+    send_semaphore_handles(&mut socket, semaphore_handles, &mut buf);
 
     // Off we go!
     let mut winit_initializing = true;
@@ -102,15 +105,18 @@ pub fn main() {
                         lazy_vulkan::Workflow::Main,
                     )],
                 );
-                lazy_vulkan.render_end(framebuffer_index);
+
+                let semaphore = semaphores[framebuffer_index as usize];
+                lazy_vulkan.render_end(
+                    framebuffer_index,
+                    &[semaphore, lazy_vulkan.rendering_complete_semaphore],
+                );
             }
             Event::WindowEvent {
                 event: WindowEvent::Resized(size),
                 ..
             } => {
-                if winit_initializing {
-                    println!("Ignoring resize during init!");
-                } else {
+                if !winit_initializing {
                     let new_render_surface = lazy_vulkan.resized(size.width, size.height);
                     lazy_renderer.update_surface(new_render_surface, &lazy_vulkan.context().device);
                 }
@@ -123,6 +129,52 @@ pub fn main() {
     unsafe {
         lazy_renderer.cleanup(&lazy_vulkan.context().device);
     }
+}
+
+fn send_semaphore_handles(
+    socket: &mut std::net::TcpStream,
+    semaphore_handles: Vec<*mut std::ffi::c_void>,
+    buf: &mut [u8; 1024],
+) {
+    socket.read(buf).unwrap();
+    let value = buf[0];
+    debug!("Read {value}");
+
+    debug!("Sending handles: {semaphore_handles:?}");
+    let write = socket.write(bytes_of_slice(&semaphore_handles)).unwrap();
+    debug!("Wrote {write} bytes");
+}
+
+unsafe fn create_semaphores(
+    context: &lazy_vulkan::vulkan_context::VulkanContext,
+    image_count: u32,
+) -> (Vec<vk::Semaphore>, Vec<vk::HANDLE>) {
+    let device = &context.device;
+    let external_semaphore =
+        ash::extensions::khr::ExternalSemaphoreWin32::new(&context.instance, &context.device);
+    let handle_type = vk::ExternalSemaphoreHandleTypeFlags::OPAQUE_WIN32_KMT;
+    (0..image_count)
+        .map(|_| {
+            let mut external_semaphore_info =
+                vk::ExportSemaphoreCreateInfo::builder().handle_types(handle_type);
+            let semaphore = device
+                .create_semaphore(
+                    &vk::SemaphoreCreateInfo::builder().push_next(&mut external_semaphore_info),
+                    None,
+                )
+                .unwrap();
+
+            let handle = external_semaphore
+                .get_semaphore_win32_handle(
+                    &vk::SemaphoreGetWin32HandleInfoKHR::builder()
+                        .handle_type(handle_type)
+                        .semaphore(semaphore),
+                )
+                .unwrap();
+
+            (semaphore, handle)
+        })
+        .unzip()
 }
 
 fn create_render_textures(
@@ -270,7 +322,7 @@ fn send_swapchain_info(
     }
 }
 
-fn send_memory_handles(
+fn send_image_memory_handles(
     socket: &mut std::net::TcpStream,
     handles: Vec<vk::HANDLE>,
     buf: &mut [u8],

@@ -63,6 +63,12 @@ pub fn main() -> std::io::Result<()> {
     info!("Swapchain info is {swapchain_info:?}!");
     let swapchain_images =
         get_swapchain_images(&mut stream, &vulkan_context, &swapchain_info, &mut buf);
+    let semaphores = get_semaphores(
+        &mut stream,
+        &vulkan_context,
+        swapchain_info.image_count,
+        &mut buf,
+    );
     info!("Images are: {swapchain_images:?}");
     let image_views = create_swapchain_image_views(
         &swapchain_images,
@@ -115,13 +121,76 @@ pub fn main() -> std::io::Result<()> {
         let swapchain_image_index = get_swapchain_image_index(&mut stream, &mut buf);
         let fence = fences[swapchain_image_index as usize];
         let command_buffer = command_buffers[swapchain_image_index as usize];
+        let semaphore = semaphores[swapchain_image_index as usize];
+
         vulkan_context.draw_command_buffer = command_buffer;
         update_colour(&mut vertices, &vulkan_context, &mut renderer);
         begin_frame(&vulkan_context, fence, command_buffer);
         renderer.render(&vulkan_context, swapchain_image_index, &draw_calls);
         end_frame(&vulkan_context, fence, command_buffer);
+        fake_submit(&vulkan_context, semaphore);
         send_render_complete(&mut stream);
     }
+}
+
+fn fake_submit(vulkan_context: &VulkanContext, semaphore: vk::Semaphore) {
+    unsafe {
+        vulkan_context
+            .device
+            .queue_submit(
+                vulkan_context.queue,
+                std::slice::from_ref(
+                    &vk::SubmitInfo::builder().signal_semaphores(std::slice::from_ref(&semaphore)),
+                ),
+                vk::Fence::null(),
+            )
+            .unwrap()
+    }
+}
+
+fn get_semaphores(
+    stream: &mut TcpStream,
+    vulkan_context: &VulkanContext,
+    image_count: u32,
+    buf: &mut [u8],
+) -> Vec<vk::Semaphore> {
+    let device = &vulkan_context.device;
+    stream.write(&mut [1]).unwrap();
+    let len = stream.read(buf).unwrap();
+    debug!("Read {len} bytes");
+    let handles: &[vk::HANDLE] =
+        unsafe { std::slice::from_raw_parts(buf.as_ptr().cast(), image_count as _) };
+    debug!("Got handle {handles:?}");
+    let external_semaphore = ash::extensions::khr::ExternalSemaphoreWin32::new(
+        &vulkan_context.instance,
+        &vulkan_context.device,
+    );
+    let handle_type = vk::ExternalSemaphoreHandleTypeFlags::OPAQUE_WIN32_KMT;
+
+    handles
+        .iter()
+        .map(|h| unsafe {
+            let mut external_semaphore_info =
+                vk::ExportSemaphoreCreateInfo::builder().handle_types(handle_type);
+            let semaphore = device
+                .create_semaphore(
+                    &vk::SemaphoreCreateInfo::builder().push_next(&mut external_semaphore_info),
+                    None,
+                )
+                .unwrap();
+
+            external_semaphore
+                .import_semaphore_win32_handle(
+                    &vk::ImportSemaphoreWin32HandleInfoKHR::builder()
+                        .handle(*h)
+                        .semaphore(semaphore)
+                        .handle_type(handle_type),
+                )
+                .unwrap();
+
+            semaphore
+        })
+        .collect()
 }
 
 fn update_colour(
