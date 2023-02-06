@@ -45,7 +45,7 @@ pub struct LazyRenderer {
     /// One or more framebuffers to draw on. This will match the number of `vk::ImageView` present in [`RenderSurface`]
     framebuffers: Vec<vk::Framebuffer>,
     /// The surface to draw on. Currently only supports present surfaces (ie. the swapchain)
-    render_surface: RenderSurface,
+    pub render_surface: RenderSurface,
     /// The pipeline layout used to draw
     pipeline_layout: vk::PipelineLayout,
     /// The graphics pipeline used to draw
@@ -137,6 +137,11 @@ impl LazyRenderer {
         let fragment_shader = builder.fragment_shader.as_ref().unwrap();
         let device = &vulkan_context.device;
         let descriptors = Descriptors::new(vulkan_context);
+        let final_layout = if builder.with_present {
+            vk::ImageLayout::PRESENT_SRC_KHR
+        } else {
+            vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL
+        };
 
         // TODO: Don't write directly to the present surface..
         let renderpass_attachments = [vk::AttachmentDescription {
@@ -144,7 +149,7 @@ impl LazyRenderer {
             samples: vk::SampleCountFlags::TYPE_1,
             load_op: vk::AttachmentLoadOp::CLEAR,
             store_op: vk::AttachmentStoreOp::STORE,
-            final_layout: vk::ImageLayout::PRESENT_SRC_KHR,
+            final_layout,
             ..Default::default()
         }];
         let color_attachment_refs = [vk::AttachmentReference {

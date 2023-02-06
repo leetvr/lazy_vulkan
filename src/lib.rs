@@ -1,8 +1,8 @@
 mod buffer;
 mod descriptors;
-mod lazy_renderer;
-mod vulkan_context;
-mod vulkan_texture;
+pub mod lazy_renderer;
+pub mod vulkan_context;
+pub mod vulkan_texture;
 
 use ash::vk;
 
@@ -24,6 +24,14 @@ pub struct Vertex {
     uv: Vec2,
 }
 
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct SwapchainInfo {
+    pub image_count: u32,
+    pub resolution: vk::Extent2D,
+    pub format: vk::Format,
+}
+
 impl Vertex {
     pub fn new<T: Into<Vec4>, U: Into<Vec2>>(position: T, colour: T, uv: U) -> Self {
         Self {
@@ -34,7 +42,7 @@ impl Vertex {
     }
 }
 
-pub(crate) fn find_memorytype_index(
+pub fn find_memorytype_index(
     memory_req: &vk::MemoryRequirements,
     memory_prop: &vk::PhysicalDeviceMemoryProperties,
     flags: vk::MemoryPropertyFlags,
@@ -55,6 +63,7 @@ pub struct LazyVulkanBuilder {
     pub vertex_shader: Option<Vec<u8>>,
     pub initial_indices: Vec<u32>,
     pub initial_vertices: Vec<Vertex>,
+    pub with_present: bool,
 }
 
 impl LazyVulkanBuilder {
@@ -78,6 +87,11 @@ impl LazyVulkanBuilder {
         self
     }
 
+    pub fn with_present(mut self, present: bool) -> Self {
+        self.with_present = present;
+        self
+    }
+
     pub fn build<'a>(self) -> (LazyVulkan, LazyRenderer, EventLoop<()>) {
         let (width, height) = (500, 500);
         let (event_loop, window) = init_winit(width, height);
@@ -95,6 +109,7 @@ pub struct LazyVulkan {
     pub window: winit::window::Window,
     pub surface: Surface,
     pub swapchain: vk::SwapchainKHR,
+    pub swapchain_images: Vec<vk::Image>,
     pub swapchain_loader: ash::extensions::khr::Swapchain,
 
     pub present_complete_semaphore: vk::Semaphore,
@@ -129,7 +144,7 @@ impl LazyVulkan {
         let device = &context.device;
         let instance = &context.instance;
         let swapchain_loader = ash::extensions::khr::Swapchain::new(&instance, &device);
-        let (swapchain, swapchain_image_views) =
+        let (swapchain, swapchain_images, swapchain_image_views) =
             create_swapchain(&context, &surface, &swapchain_loader, None);
 
         let fence_create_info =
@@ -172,6 +187,7 @@ impl LazyVulkan {
                 surface,
                 swapchain_loader,
                 swapchain,
+                swapchain_images,
                 present_complete_semaphore,
                 rendering_complete_semaphore,
                 draw_commands_reuse_fence,
@@ -190,7 +206,7 @@ impl LazyVulkan {
                 width: window_width,
                 height: window_height,
             };
-            let (new_swapchain, new_present_image_views) = create_swapchain(
+            let (new_swapchain, _, new_present_image_views) = create_swapchain(
                 &self.context,
                 &self.surface,
                 &self.swapchain_loader,
@@ -318,7 +334,7 @@ fn create_swapchain(
     surface: &Surface,
     swapchain_loader: &ash::extensions::khr::Swapchain,
     previous_swapchain: Option<vk::SwapchainKHR>,
-) -> (vk::SwapchainKHR, Vec<vk::ImageView>) {
+) -> (vk::SwapchainKHR, Vec<vk::Image>, Vec<vk::ImageView>) {
     let device = &context.device;
 
     let mut swapchain_create_info = vk::SwapchainCreateInfoKHR::builder()
@@ -346,12 +362,23 @@ fn create_swapchain(
     };
 
     let present_images = unsafe { swapchain_loader.get_swapchain_images(swapchain).unwrap() };
-    let present_image_views: Vec<vk::ImageView> = present_images
+    let present_image_views =
+        create_swapchain_image_views(&present_images, surface.surface_format.format, device);
+
+    (swapchain, present_images, present_image_views)
+}
+
+pub fn create_swapchain_image_views(
+    present_images: &[vk::Image],
+    surface_format: vk::Format,
+    device: &ash::Device,
+) -> Vec<vk::ImageView> {
+    present_images
         .iter()
         .map(|&image| {
             let create_view_info = vk::ImageViewCreateInfo::builder()
                 .view_type(vk::ImageViewType::TYPE_2D)
-                .format(surface.surface_format.format)
+                .format(surface_format)
                 .components(vk::ComponentMapping {
                     r: vk::ComponentSwizzle::R,
                     g: vk::ComponentSwizzle::G,
@@ -368,9 +395,7 @@ fn create_swapchain(
                 .image(image);
             unsafe { device.create_image_view(&create_view_info, None).unwrap() }
         })
-        .collect();
-
-    (swapchain, present_image_views)
+        .collect()
 }
 
 #[cfg(test)]

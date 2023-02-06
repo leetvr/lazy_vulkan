@@ -28,11 +28,11 @@ pub struct VulkanContext {
 
 impl VulkanContext {
     pub fn new() -> Self {
-        let (entry, instance) = init(&mut []);
+        let (entry, instance) = init(&mut Default::default());
         let (physical_device, queue_family_index) = get_physical_device(&instance, None, None);
 
         let queue_family_index = queue_family_index as u32;
-        let device = create_device(queue_family_index, &mut [], &instance, physical_device);
+        let device = create_device(queue_family_index, &mut vec![], &instance, physical_device);
         let queue = unsafe { device.get_device_queue(queue_family_index, 0) };
         let (command_pool, draw_command_buffer) = create_command_pool(queue_family_index, &device);
         let memory_properties =
@@ -76,7 +76,7 @@ impl VulkanContext {
             get_physical_device(&instance, Some(&surface_loader), Some(&surface));
 
         let queue_family_index = queue_family_index as u32;
-        let mut device_extension_names_raw = [ash::extensions::khr::Swapchain::name().as_ptr()];
+        let mut device_extension_names_raw = vec![ash::extensions::khr::Swapchain::name().as_ptr()];
 
         let device = create_device(
             queue_family_index,
@@ -359,12 +359,15 @@ fn create_command_pool(
 
 fn create_device(
     queue_family_index: u32,
-    device_extension_names_raw: &mut [*const std::ffi::c_char],
+    extension_names: &mut Vec<*const std::ffi::c_char>,
     instance: &ash::Instance,
     physical_device: vk::PhysicalDevice,
 ) -> ash::Device {
     #[cfg(any(target_os = "macos", target_os = "ios"))]
-    device_extension_names_raw.push(KhrPortabilitySubsetFn::name().as_ptr());
+    extension_names.push(KhrPortabilitySubsetFn::name().as_ptr());
+
+    #[cfg(target_os = "windows")]
+    extension_names.push(ash::extensions::khr::ExternalMemoryWin32::name().as_ptr());
 
     let priorities = [1.0];
     let queue_info = vk::DeviceQueueCreateInfo::builder()
@@ -376,7 +379,7 @@ fn create_device(
 
     let device_create_info = vk::DeviceCreateInfo::builder()
         .queue_create_infos(std::slice::from_ref(&queue_info))
-        .enabled_extension_names(&device_extension_names_raw)
+        .enabled_extension_names(&extension_names)
         .push_next(&mut descriptor_indexing_features);
 
     let device = unsafe {
@@ -443,7 +446,7 @@ fn get_physical_device(
     (physical_device, queue_family_index as u32)
 }
 
-fn init(extension_names: &mut [*const std::ffi::c_char]) -> (ash::Entry, ash::Instance) {
+fn init(extension_names: &mut Vec<*const std::ffi::c_char>) -> (ash::Entry, ash::Instance) {
     #[cfg(any(target_os = "macos", target_os = "ios"))]
     {
         extension_names.push(KhrPortabilityEnumerationFn::name().as_ptr());
