@@ -15,37 +15,79 @@ and so then Vulkan is sorta like "ugh fine" and then like rolls its eyes so I gu
 trying to say is this crate lets you do some things I guess.
 
 ## Examples
+### An Triangles
 Let's say we want to get a triangle on the screen. Who really knows why - we just want one.
 
 ```rust
-use lazy_vulkan::{LazyVulkan, Vertex};
-/// Compile your own damn shaders! LazyVulkan is just as lazy as you are!
-static FRAGMENT_SHADER: &'static [u8]  = include_bytes!("shaders/triangle.frag");
-static VERTEX_SHADER: &'static [u8]  = include_bytes!("shaders/triangle.vert");
+pub fn main() {
+  use lazy_vulkan::{LazyVulkan, Vertex};
+  // Compile your own damn shaders! LazyVulkan is just as lazy as you are!
+  static FRAGMENT_SHADER: &'static [u8]  = include_bytes!("shaders/triangle.frag");
+  static VERTEX_SHADER: &'static [u8]  = include_bytes!("shaders/triangle.vert");
 
-/// Oh, you thought you could supply your own Vertex type? What is this, a rendergraph?!
-/// Better make sure those shaders use the right layout!
-/// **LAUGHS IN VULKAN**
-let vertices = [
-    Vertex::new([1.0, 1.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0], [0.0, 0.0]),
-    Vertex::new([1.0, -1.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0]),
-    Vertex::new([-1.0, 0.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0]),
-];
+  // Oh, you thought you could supply your own Vertex type? What is this, a rendergraph?!
+  // Better make sure those shaders use the right layout!
+  // **LAUGHS IN VULKAN**
+  let vertices = [
+      Vertex::new([1.0, 1.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0], [0.0, 0.0]),
+      Vertex::new([1.0, -1.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0]),
+      Vertex::new([-1.0, 0.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0]),
+  ];
 
-/// Your own index type?! What are you going to use, `u16`?
-let indices = [0, 1, 2];
+  // Your own index type?! What are you going to use, `u16`?
+  let indices = [0, 1, 2];
 
-/// Alright, let's get on with it.
-/// 
-/// You want a different window size? Just resize it!
-let lazy_vulkan = LazyVulkan::builder()
-    .fragment_shader(FRAGMENT_SHADER)
-    .vertex_shader(VERTEX_SHADER)
-    .build();
+  // Alright, let's get on with it.
+  // 
+  // You want a different window size? Just resize it!
+  let (mut lazy_vulkan, mut lazy_renderer, mut event_loop) = LazyVulkan::builder()
+      .initial_vertices(&vertices)
+      .initial_indices(&indices)
+      .fragment_shader(FRAGMENT_SHADER)
+      .vertex_shader(VERTEX_SHADER)
+      .build();
 
-/// Okay now you're just being ridiculous.
-lazy_vulkan.run_default_render_loop();
+  // *whistling*
+  event_loop.run_return(|event, _, control_flow| {
+    // Note that there's no need to ever close the window because triangles are forever.
+    match event {
+      Event::MainEventsCleared => {
+          let framebuffer_index = lazy_vulkan.render_begin();
+          lazy_renderer.render(
+              &lazy_vulkan.context(),
+              framebuffer_index,
+              &[DrawCall::new(0, 3, NO_TEXTURE_ID, Workflow::Main)],
+          );
+
+          // Don't forget your semaphores!
+          lazy_vulkan
+              .render_end(framebuffer_index, &[lazy_vulkan.present_complete_semaphore]);
+      }
+      _ => {},
+    }
+  }
+
+  // I guess we better do this or else the Dreaded Validation Layers will complain
+  unsafe {
+      lazy_renderer.cleanup(&lazy_vulkan.context().device);
+  }
+}
 ```
+
+The full source for this miraculous creation is available [here](examples/triangle.rs).
+
+### Remote rendering
+A logical next step to getting a triangle on the screen is rendering a triangle rendered
+in another process. You can find an extremely safe, robust and clean implementation of this
+extremely trivial process in the following places:
+
+- [Remote Host](examples/remote_host.rs)
+- [Remote Client](examples/remote_client.rs)
+
+Please note that these will only run on the Microsoft Windows(TM) operating system. 
+
+## NOTE
+This repository is a joke and its contents should never, ever be used as the basis for a AAA rendering engine.
 
 ## License
 
