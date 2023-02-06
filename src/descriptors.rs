@@ -2,7 +2,7 @@ use ash::vk;
 
 use crate::vulkan_context::VulkanContext;
 
-pub(crate) struct Descriptors {
+pub struct Descriptors {
     pub pool: vk::DescriptorPool,
     pub set: vk::DescriptorSet,
     pub layout: vk::DescriptorSetLayout,

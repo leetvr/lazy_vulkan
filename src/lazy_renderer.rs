@@ -51,13 +51,13 @@ pub struct LazyRenderer {
     /// The graphics pipeline used to draw
     graphics_pipeline: vk::Pipeline,
     /// A single index buffer, shared between all draw calls
-    index_buffer: Buffer<u32>,
+    pub index_buffer: Buffer<u32>,
     /// A single vertex buffer, shared between all draw calls
-    vertex_buffer: Buffer<crate::Vertex>,
+    pub vertex_buffer: Buffer<crate::Vertex>,
     /// Textures owned by the user
     user_textures: thunderdome::Arena<VulkanTexture>,
     /// A wrapper around descriptor set functionality
-    descriptors: Descriptors,
+    pub descriptors: Descriptors,
 }
 
 #[derive(Clone)]

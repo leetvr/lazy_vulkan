@@ -4,9 +4,9 @@ use crate::{descriptors::Descriptors, vulkan_context::VulkanContext};
 
 pub const NO_TEXTURE_ID: u32 = u32::MAX;
 
-pub(crate) struct VulkanTexture {
-    image: vk::Image,
-    memory: vk::DeviceMemory,
+pub struct VulkanTexture {
+    pub image: vk::Image,
+    pub memory: vk::DeviceMemory,
     pub sampler: vk::Sampler,
     pub view: vk::ImageView,
     pub id: u32,

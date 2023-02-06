@@ -1,8 +1,9 @@
 use ash::vk;
 use lazy_vulkan::{
-    find_memorytype_index, DrawCall, LazyVulkan, SwapchainInfo, Vertex, Workflow, NO_TEXTURE_ID,
+    find_memorytype_index, vulkan_texture::VulkanTexture, DrawCall, LazyRenderer, LazyVulkan,
+    SwapchainInfo, Vertex,
 };
-use log::info;
+use log::{debug, info};
 use std::io::{Read, Write};
 use winit::{
     event::{ElementState, Event, KeyboardInput, VirtualKeyCode, WindowEvent},
@@ -12,6 +13,7 @@ use winit::{
 /// Compile your own damn shaders! LazyVulkan is just as lazy as you are!
 static FRAGMENT_SHADER: &'static [u8] = include_bytes!("shaders/triangle.frag.spv");
 static VERTEX_SHADER: &'static [u8] = include_bytes!("shaders/triangle.vert.spv");
+const SWAPCHAIN_FORMAT: vk::Format = vk::Format::R8G8B8A8_UNORM;
 
 pub fn main() {
     env_logger::builder()
@@ -22,13 +24,14 @@ pub fn main() {
     // Better make sure those shaders use the right layout!
     // **LAUGHS IN VULKAN**
     let vertices = [
-        Vertex::new([1.0, 1.0, 0.0, 1.0], [1.0, 0.0, 0.0, 0.0], [0.0, 0.0]),
-        Vertex::new([-1.0, 1.0, 0.0, 1.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0]),
-        Vertex::new([0.0, -1.0, 0.0, 1.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0]),
+        Vertex::new([1.0, 1.0, 0.0, 1.0], [1.0, 1.0, 1.0, 0.0], [1.0, 1.0]), // bottom right
+        Vertex::new([-1.0, 1.0, 0.0, 1.0], [1.0, 1.0, 1.0, 0.0], [0.0, 1.0]), // bottom left
+        Vertex::new([1.0, -1.0, 0.0, 1.0], [1.0, 1.0, 1.0, 0.0], [1.0, 0.0]), // top right
+        Vertex::new([-1.0, -1.0, 0.0, 1.0], [1.0, 1.0, 1.0, 0.0], [0.0, 0.0]), // top left
     ];
 
     // Your own index type?! What are you going to use, `u16`?
-    let indices = [0, 1, 2];
+    let indices = [0, 1, 2, 2, 1, 3];
 
     // Alright, let's build some stuff
     let (mut lazy_vulkan, mut lazy_renderer, mut event_loop) = LazyVulkan::builder()
@@ -41,14 +44,17 @@ pub fn main() {
 
     // Let's do something totally normal and wait for a TCP connection
     let listener = std::net::TcpListener::bind("127.0.0.1:8000").unwrap();
-    info!("Listening on 0:8000 - waiting for connection");
+    info!("Listening on 0:8000 - waiting for client..");
     let swapchain_info = SwapchainInfo {
         image_count: lazy_vulkan.surface.desired_image_count,
         resolution: lazy_vulkan.surface.surface_resolution,
-        format: lazy_vulkan.surface.surface_format.format,
+        format: SWAPCHAIN_FORMAT,
     };
-    let memory_handles = unsafe { create_memory_handles(lazy_vulkan.context(), &swapchain_info) };
+    let (images, memory_handles) =
+        unsafe { create_render_images(lazy_vulkan.context(), &swapchain_info) };
+    let textures = create_render_textures(lazy_vulkan.context(), &mut lazy_renderer, images);
     let (mut socket, _) = listener.accept().unwrap();
+    info!("Client connected!");
     let mut buf: [u8; 1024] = [0; 1024];
     send_swapchain_info(&mut socket, &swapchain_info, &mut buf).unwrap();
     send_memory_handles(&mut socket, memory_handles, &mut buf).unwrap();
@@ -84,10 +90,17 @@ pub fn main() {
             Event::MainEventsCleared => {
                 let framebuffer_index = lazy_vulkan.render_begin();
                 send_swapchain_image_index(&mut socket, &mut buf, framebuffer_index);
+                get_render_complete(&mut socket, &mut buf);
+                let texture_id = textures[framebuffer_index as usize].id;
                 lazy_renderer.render(
-                    &lazy_vulkan.context(),
+                    lazy_vulkan.context(),
                     framebuffer_index,
-                    &[DrawCall::new(0, 3, NO_TEXTURE_ID, Workflow::Main)],
+                    &[DrawCall::new(
+                        0,
+                        indices.len() as _,
+                        texture_id,
+                        lazy_vulkan::Workflow::Main,
+                    )],
                 );
                 lazy_vulkan.render_end(framebuffer_index);
             }
@@ -112,6 +125,51 @@ pub fn main() {
     }
 }
 
+fn create_render_textures(
+    vulkan_context: &lazy_vulkan::vulkan_context::VulkanContext,
+    renderer: &mut LazyRenderer,
+    mut images: Vec<vk::Image>,
+) -> Vec<VulkanTexture> {
+    let descriptors = &mut renderer.descriptors;
+    let address_mode = vk::SamplerAddressMode::REPEAT;
+    let filter = vk::Filter::LINEAR;
+    images
+        .drain(..)
+        .map(|image| {
+            let view = unsafe { vulkan_context.create_image_view(image, SWAPCHAIN_FORMAT) };
+            let sampler = unsafe {
+                vulkan_context
+                    .device
+                    .create_sampler(
+                        &vk::SamplerCreateInfo::builder()
+                            .address_mode_u(address_mode)
+                            .address_mode_v(address_mode)
+                            .address_mode_w(address_mode)
+                            .mag_filter(filter)
+                            .min_filter(filter),
+                        None,
+                    )
+                    .unwrap()
+            };
+
+            let id =
+                unsafe { descriptors.update_texture_descriptor_set(view, sampler, vulkan_context) };
+
+            lazy_vulkan::vulkan_texture::VulkanTexture {
+                image,
+                memory: vk::DeviceMemory::null(), // todo
+                sampler,
+                view,
+                id,
+            }
+        })
+        .collect()
+}
+
+fn get_render_complete(socket: &mut std::net::TcpStream, buf: &mut [u8]) {
+    socket.read(buf).unwrap();
+}
+
 fn send_swapchain_image_index(
     socket: &mut std::net::TcpStream,
     buf: &mut [u8; 1024],
@@ -121,19 +179,22 @@ fn send_swapchain_image_index(
     socket.write(&mut [framebuffer_index as u8]).unwrap();
 }
 
-unsafe fn create_memory_handles(
+unsafe fn create_render_images(
     context: &lazy_vulkan::vulkan_context::VulkanContext,
     swapchain_info: &SwapchainInfo,
-) -> Vec<vk::HANDLE> {
+) -> (Vec<vk::Image>, Vec<vk::HANDLE>) {
     let device = &context.device;
     let SwapchainInfo {
         resolution,
         format,
         image_count,
     } = swapchain_info;
+    let handle_type = vk::ExternalMemoryHandleTypeFlags::OPAQUE_WIN32_KMT;
 
     (0..(*image_count))
         .map(|_| {
+            let mut handle_info =
+                vk::ExternalMemoryImageCreateInfo::builder().handle_types(handle_type);
             let image = device
                 .create_image(
                     &vk::ImageCreateInfo {
@@ -146,6 +207,7 @@ unsafe fn create_memory_handles(
                         tiling: vk::ImageTiling::OPTIMAL,
                         usage: vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
                         sharing_mode: vk::SharingMode::EXCLUSIVE,
+                        p_next: &mut handle_info as *mut _ as *mut _,
                         ..Default::default()
                     },
                     None,
@@ -159,7 +221,6 @@ unsafe fn create_memory_handles(
                 vk::MemoryPropertyFlags::DEVICE_LOCAL,
             )
             .expect("Unable to find suitable memory type for image");
-            let handle_type = vk::ExternalMemoryHandleTypeFlags::OPAQUE_WIN32_KMT;
             let mut export_handle_info =
                 vk::ExportMemoryAllocateInfo::builder().handle_types(handle_type);
             let memory = context
@@ -173,6 +234,8 @@ unsafe fn create_memory_handles(
                 )
                 .unwrap();
 
+            device.bind_image_memory(image, memory, 0).unwrap();
+
             let external_memory =
                 ash::extensions::khr::ExternalMemoryWin32::new(&context.instance, &context.device);
             let handle = external_memory
@@ -182,11 +245,11 @@ unsafe fn create_memory_handles(
                         .memory(memory),
                 )
                 .unwrap();
-            info!("Created handle {handle:?}");
+            debug!("Created handle {handle:?}");
 
-            handle
+            (image, handle)
         })
-        .collect()
+        .unzip()
 }
 
 fn send_swapchain_info(
@@ -194,14 +257,13 @@ fn send_swapchain_info(
     swapchain_info: &SwapchainInfo,
     buf: &mut [u8],
 ) -> std::io::Result<()> {
-    info!("Processing connection..");
     socket.read(buf)?;
     let value = buf[0];
-    info!("Read {value}");
+    debug!("Read {value}");
 
     if value == 0 {
         let write = socket.write(bytes_of(swapchain_info)).unwrap();
-        info!("Write {write} bytes");
+        debug!("Write {write} bytes");
         return Ok(());
     } else {
         panic!("Invalid request!");
@@ -213,15 +275,14 @@ fn send_memory_handles(
     handles: Vec<vk::HANDLE>,
     buf: &mut [u8],
 ) -> std::io::Result<()> {
-    info!("Processing connection..");
     socket.read(buf)?;
     let value = buf[0];
-    info!("Read {value}");
+    debug!("Read {value}");
 
     if value == 1 {
-        info!("Sending handle: {handles:?}");
+        debug!("Sending handles: {handles:?}");
         let write = socket.write(bytes_of_slice(&handles)).unwrap();
-        info!("Write {write} bytes");
+        debug!("Write {write} bytes");
         return Ok(());
     } else {
         panic!("Invalid request!");

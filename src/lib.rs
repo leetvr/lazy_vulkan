@@ -19,9 +19,9 @@ use crate::{lazy_renderer::RenderSurface, vulkan_context::VulkanContext};
 
 #[derive(Default, Debug, Clone, Copy)]
 pub struct Vertex {
-    position: Vec4,
-    colour: Vec4,
-    uv: Vec2,
+    pub position: Vec4,
+    pub colour: Vec4,
+    pub uv: Vec2,
 }
 
 #[repr(C)]

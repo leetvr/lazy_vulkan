@@ -4,20 +4,40 @@ use lazy_vulkan::{
 };
 use std::io::{Read, Write};
 use std::net::TcpStream;
+use std::sync::Mutex;
 
 use ash::vk;
-use log::info;
+use log::{debug, error, info};
 
 /// Compile your own damn shaders! LazyVulkan is just as lazy as you are!
 static FRAGMENT_SHADER: &'static [u8] = include_bytes!("shaders/triangle.frag.spv");
 static VERTEX_SHADER: &'static [u8] = include_bytes!("shaders/triangle.vert.spv");
+
+#[derive(Debug, Clone)]
+pub enum Color {
+    Blue,
+    Red,
+    Green,
+}
+
+impl Color {
+    fn to_rgba(&self) -> [f32; 4] {
+        match self {
+            Color::Blue => [0., 0., 1., 0.],
+            Color::Red => [1., 0., 0., 0.],
+            Color::Green => [0., 1., 0., 0.],
+        }
+    }
+}
+
+static mut COLOUR: Mutex<Color> = Mutex::new(Color::Blue);
 
 pub fn main() -> std::io::Result<()> {
     env_logger::builder()
         .filter_level(log::LevelFilter::Info)
         .init();
 
-    let vertices = [
+    let mut vertices = [
         Vertex::new([1.0, 1.0, 0.0, 1.0], [1.0, 0.0, 0.0, 0.0], [0.0, 0.0]),
         Vertex::new([-1.0, 1.0, 0.0, 1.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0]),
         Vertex::new([0.0, -1.0, 0.0, 1.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0]),
@@ -27,7 +47,7 @@ pub fn main() -> std::io::Result<()> {
     let indices = [0, 1, 2];
 
     // Alright, let's build some stuff
-    let vulkan_context = lazy_vulkan::vulkan_context::VulkanContext::new();
+    let mut vulkan_context = lazy_vulkan::vulkan_context::VulkanContext::new();
     let builder = lazy_vulkan::LazyVulkan::builder()
         .fragment_shader(FRAGMENT_SHADER)
         .vertex_shader(VERTEX_SHADER)
@@ -56,20 +76,146 @@ pub fn main() -> std::io::Result<()> {
         image_views,
     };
 
-    let renderer =
+    let mut renderer =
         lazy_vulkan::lazy_renderer::LazyRenderer::new(&vulkan_context, render_surface, &builder);
 
     let draw_calls = [DrawCall::new(0, 3, NO_TEXTURE_ID, Workflow::Main)];
+    let fences = create_fences(&vulkan_context, swapchain_info.image_count);
+    let command_buffers = create_command_buffers(&vulkan_context, swapchain_info.image_count);
+
+    std::thread::spawn(|| {
+        let mut buffer = String::new();
+        loop {
+            info!("[CLIENT] Waiting for input..");
+            if let Ok(_) = std::io::stdin().read_line(&mut buffer) {
+                let new_color = match buffer.as_str().trim() {
+                    "b" => Some(Color::Blue),
+                    "g" => Some(Color::Green),
+                    "r" => Some(Color::Red),
+                    _ => {
+                        error!(
+                            "[CLIENT] Invalid input {buffer:?}. Press r, g or b then hit enter."
+                        );
+                        None
+                    }
+                };
+
+                if let Some(new_color) = new_color {
+                    info!("[CLIENT] Triangle is now {new_color:?}");
+                    unsafe { *COLOUR.get_mut().unwrap() = new_color }
+                }
+
+                buffer.clear();
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+    });
 
     loop {
         let swapchain_image_index = get_swapchain_image_index(&mut stream, &mut buf);
+        let fence = fences[swapchain_image_index as usize];
+        let command_buffer = command_buffers[swapchain_image_index as usize];
+        vulkan_context.draw_command_buffer = command_buffer;
+        update_colour(&mut vertices, &vulkan_context, &mut renderer);
+        begin_frame(&vulkan_context, fence, command_buffer);
         renderer.render(&vulkan_context, swapchain_image_index, &draw_calls);
+        end_frame(&vulkan_context, fence, command_buffer);
         send_render_complete(&mut stream);
     }
 }
 
-fn send_render_complete(stream: &mut std::net::TcpStream) -> {
-    todo!()
+fn update_colour(
+    vertices: &mut [Vertex],
+    vulkan_context: &VulkanContext,
+    renderer: &mut lazy_vulkan::LazyRenderer,
+) {
+    if let Ok(colour) = unsafe { COLOUR.get_mut() } {
+        for v in vertices.iter_mut() {
+            v.colour = colour.to_rgba().into()
+        }
+
+        unsafe {
+            renderer.vertex_buffer.overwrite(vulkan_context, &vertices);
+        }
+    }
+}
+
+fn create_command_buffers(
+    vulkan_context: &VulkanContext,
+    image_count: u32,
+) -> Vec<vk::CommandBuffer> {
+    unsafe {
+        vulkan_context
+            .device
+            .allocate_command_buffers(
+                &vk::CommandBufferAllocateInfo::builder()
+                    .command_pool(vulkan_context.command_pool)
+                    .command_buffer_count(image_count),
+            )
+            .unwrap()
+    }
+}
+
+fn create_fences(vulkan_context: &VulkanContext, image_count: u32) -> Vec<vk::Fence> {
+    (0..image_count)
+        .map(|_| unsafe {
+            vulkan_context
+                .device
+                .create_fence(
+                    &vk::FenceCreateInfo::builder().flags(vk::FenceCreateFlags::SIGNALED),
+                    None,
+                )
+                .unwrap()
+        })
+        .collect()
+}
+
+fn end_frame(vulkan_context: &VulkanContext, fence: vk::Fence, command_buffer: vk::CommandBuffer) {
+    let device = &vulkan_context.device;
+    unsafe {
+        device.end_command_buffer(command_buffer).unwrap();
+
+        device
+            .queue_submit(
+                vulkan_context.queue,
+                &[vk::SubmitInfo::builder()
+                    .command_buffers(std::slice::from_ref(&command_buffer))
+                    .build()],
+                fence,
+            )
+            .unwrap();
+    }
+}
+
+fn begin_frame(
+    vulkan_context: &VulkanContext,
+    fence: vk::Fence,
+    command_buffer: vk::CommandBuffer,
+) {
+    let device = &vulkan_context.device;
+    unsafe {
+        device
+            .wait_for_fences(std::slice::from_ref(&fence), true, std::u64::MAX)
+            .unwrap();
+        device.reset_fences(std::slice::from_ref(&fence)).unwrap();
+        device
+            .reset_command_buffer(
+                command_buffer,
+                vk::CommandBufferResetFlags::RELEASE_RESOURCES,
+            )
+            .unwrap();
+        device
+            .begin_command_buffer(
+                command_buffer,
+                &vk::CommandBufferBeginInfo::builder()
+                    .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT),
+            )
+            .unwrap();
+    }
+}
+
+fn send_render_complete(stream: &mut std::net::TcpStream) {
+    stream.write(&mut [3]).unwrap();
 }
 
 fn get_swapchain_image_index(stream: &mut std::net::TcpStream, buf: &mut [u8]) -> u32 {
@@ -87,10 +233,10 @@ fn get_swapchain_images(
     let device = &vulkan.device;
     stream.write(&mut [1]).unwrap();
     let len = stream.read(buf).unwrap();
-    info!("Read {len} bytes");
+    debug!("Read {len} bytes");
     let handles: &[vk::HANDLE] =
         unsafe { std::slice::from_raw_parts(buf.as_ptr().cast(), swapchain_info.image_count as _) };
-    info!("Got handle {handles:?}");
+    debug!("Got handle {handles:?}");
 
     handles
         .into_iter()

@@ -309,11 +309,7 @@ impl VulkanContext {
             .unwrap()
     }
 
-    pub(crate) unsafe fn create_image_view(
-        &self,
-        image: vk::Image,
-        format: vk::Format,
-    ) -> vk::ImageView {
+    pub unsafe fn create_image_view(&self, image: vk::Image, format: vk::Format) -> vk::ImageView {
         self.device
             .create_image_view(
                 &vk::ImageViewCreateInfo {
