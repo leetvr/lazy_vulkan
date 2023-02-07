@@ -3,8 +3,8 @@ use lazy_vulkan::{
     create_swapchain_image_views, DrawCall, SwapchainInfo, Vertex, Workflow, NO_TEXTURE_ID,
 };
 use std::io::{Read, Write};
-use std::net::TcpStream;
 use std::sync::Mutex;
+use uds_windows::UnixStream;
 
 use ash::vk;
 use log::{debug, error, info};
@@ -31,6 +31,7 @@ impl Color {
 }
 
 static mut COLOUR: Mutex<Color> = Mutex::new(Color::Blue);
+static UNIX_SOCKET_PATH: &'_ str = "lazy_vulkan.socket";
 
 pub fn main() -> std::io::Result<()> {
     env_logger::builder()
@@ -54,8 +55,8 @@ pub fn main() -> std::io::Result<()> {
         .initial_indices(&indices)
         .initial_vertices(&vertices);
 
-    info!("Conecting to server..");
-    let mut stream = TcpStream::connect("127.0.0.1:8000")?;
+    info!("Conecting to server at {UNIX_SOCKET_PATH}..");
+    let mut stream = UnixStream::connect(UNIX_SOCKET_PATH)?;
     info!("Connected!");
 
     let mut buf: [u8; 1024] = [0; 1024];
@@ -149,7 +150,7 @@ fn fake_submit(vulkan_context: &VulkanContext, semaphore: vk::Semaphore) {
 }
 
 fn get_semaphores(
-    stream: &mut TcpStream,
+    stream: &mut UnixStream,
     vulkan_context: &VulkanContext,
     image_count: u32,
     buf: &mut [u8],
@@ -283,18 +284,18 @@ fn begin_frame(
     }
 }
 
-fn send_render_complete(stream: &mut std::net::TcpStream) {
+fn send_render_complete(stream: &mut UnixStream) {
     stream.write(&mut [3]).unwrap();
 }
 
-fn get_swapchain_image_index(stream: &mut std::net::TcpStream, buf: &mut [u8]) -> u32 {
+fn get_swapchain_image_index(stream: &mut UnixStream, buf: &mut [u8]) -> u32 {
     stream.write(&mut [2]).unwrap();
     stream.read(buf).unwrap();
     buf[0] as _
 }
 
 fn get_swapchain_images(
-    stream: &mut TcpStream,
+    stream: &mut UnixStream,
     vulkan: &VulkanContext,
     swapchain_info: &SwapchainInfo,
     buf: &mut [u8; 1024],
@@ -351,7 +352,7 @@ fn get_swapchain_images(
         .collect()
 }
 
-fn get_swapchain_info(stream: &mut TcpStream, buf: &mut [u8]) -> SwapchainInfo {
+fn get_swapchain_info(stream: &mut UnixStream, buf: &mut [u8]) -> SwapchainInfo {
     stream.write(&mut [0]).unwrap();
     let len = stream.read(buf).unwrap();
     info!("Read {len} bytes");

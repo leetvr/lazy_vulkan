@@ -5,15 +5,18 @@ use lazy_vulkan::{
 };
 use log::{debug, info};
 use std::io::{Read, Write};
+use uds_windows::{UnixListener, UnixStream};
 use winit::{
     event::{ElementState, Event, KeyboardInput, VirtualKeyCode, WindowEvent},
     event_loop::ControlFlow,
     platform::run_return::EventLoopExtRunReturn,
 };
+
 /// Compile your own damn shaders! LazyVulkan is just as lazy as you are!
-static FRAGMENT_SHADER: &'static [u8] = include_bytes!("shaders/triangle.frag.spv");
-static VERTEX_SHADER: &'static [u8] = include_bytes!("shaders/triangle.vert.spv");
+static FRAGMENT_SHADER: &'_ [u8] = include_bytes!("shaders/triangle.frag.spv");
+static VERTEX_SHADER: &'_ [u8] = include_bytes!("shaders/triangle.vert.spv");
 const SWAPCHAIN_FORMAT: vk::Format = vk::Format::R8G8B8A8_UNORM;
+static UNIX_SOCKET_PATH: &'_ str = "lazy_vulkan.socket";
 
 pub fn main() {
     env_logger::builder()
@@ -43,8 +46,11 @@ pub fn main() {
         .build();
 
     // Let's do something totally normal and wait for a TCP connection
-    let listener = std::net::TcpListener::bind("127.0.0.1:8000").unwrap();
-    info!("Listening on 0:8000 - waiting for client..");
+    if std::fs::remove_file(UNIX_SOCKET_PATH).is_ok() {
+        debug!("Removed pre-existing unix socket at {UNIX_SOCKET_PATH}");
+    }
+    let listener = UnixListener::bind(UNIX_SOCKET_PATH).unwrap();
+    info!("Listening on {UNIX_SOCKET_PATH} - waiting for client..");
     let swapchain_info = SwapchainInfo {
         image_count: lazy_vulkan.surface.desired_image_count,
         resolution: lazy_vulkan.surface.surface_resolution,
@@ -55,12 +61,12 @@ pub fn main() {
     let (semaphores, semaphore_handles) =
         unsafe { create_semaphores(lazy_vulkan.context(), swapchain_info.image_count) };
     let textures = create_render_textures(lazy_vulkan.context(), &mut lazy_renderer, images);
-    let (mut socket, _) = listener.accept().unwrap();
+    let (mut stream, _) = listener.accept().unwrap();
     info!("Client connected!");
     let mut buf: [u8; 1024] = [0; 1024];
-    send_swapchain_info(&mut socket, &swapchain_info, &mut buf).unwrap();
-    send_image_memory_handles(&mut socket, image_memory_handles, &mut buf).unwrap();
-    send_semaphore_handles(&mut socket, semaphore_handles, &mut buf);
+    send_swapchain_info(&mut stream, &swapchain_info, &mut buf).unwrap();
+    send_image_memory_handles(&mut stream, image_memory_handles, &mut buf).unwrap();
+    send_semaphore_handles(&mut stream, semaphore_handles, &mut buf);
 
     // Off we go!
     let mut winit_initializing = true;
@@ -92,8 +98,8 @@ pub fn main() {
 
             Event::MainEventsCleared => {
                 let framebuffer_index = lazy_vulkan.render_begin();
-                send_swapchain_image_index(&mut socket, &mut buf, framebuffer_index);
-                get_render_complete(&mut socket, &mut buf);
+                send_swapchain_image_index(&mut stream, &mut buf, framebuffer_index);
+                get_render_complete(&mut stream, &mut buf);
                 let texture_id = textures[framebuffer_index as usize].id;
                 lazy_renderer.render(
                     lazy_vulkan.context(),
@@ -132,16 +138,16 @@ pub fn main() {
 }
 
 fn send_semaphore_handles(
-    socket: &mut std::net::TcpStream,
+    stream: &mut UnixStream,
     semaphore_handles: Vec<*mut std::ffi::c_void>,
     buf: &mut [u8; 1024],
 ) {
-    socket.read(buf).unwrap();
+    stream.read(buf).unwrap();
     let value = buf[0];
     debug!("Read {value}");
 
     debug!("Sending handles: {semaphore_handles:?}");
-    let write = socket.write(bytes_of_slice(&semaphore_handles)).unwrap();
+    let write = stream.write(bytes_of_slice(&semaphore_handles)).unwrap();
     debug!("Wrote {write} bytes");
 }
 
@@ -218,17 +224,17 @@ fn create_render_textures(
         .collect()
 }
 
-fn get_render_complete(socket: &mut std::net::TcpStream, buf: &mut [u8]) {
-    socket.read(buf).unwrap();
+fn get_render_complete(stream: &mut UnixStream, buf: &mut [u8]) {
+    stream.read(buf).unwrap();
 }
 
 fn send_swapchain_image_index(
-    socket: &mut std::net::TcpStream,
+    stream: &mut UnixStream,
     buf: &mut [u8; 1024],
     framebuffer_index: u32,
 ) {
-    socket.read(buf).unwrap();
-    socket.write(&mut [framebuffer_index as u8]).unwrap();
+    stream.read(buf).unwrap();
+    stream.write(&mut [framebuffer_index as u8]).unwrap();
 }
 
 unsafe fn create_render_images(
@@ -305,16 +311,16 @@ unsafe fn create_render_images(
 }
 
 fn send_swapchain_info(
-    socket: &mut std::net::TcpStream,
+    stream: &mut UnixStream,
     swapchain_info: &SwapchainInfo,
     buf: &mut [u8],
 ) -> std::io::Result<()> {
-    socket.read(buf)?;
+    stream.read(buf)?;
     let value = buf[0];
     debug!("Read {value}");
 
     if value == 0 {
-        let write = socket.write(bytes_of(swapchain_info)).unwrap();
+        let write = stream.write(bytes_of(swapchain_info)).unwrap();
         debug!("Write {write} bytes");
         return Ok(());
     } else {
@@ -323,17 +329,17 @@ fn send_swapchain_info(
 }
 
 fn send_image_memory_handles(
-    socket: &mut std::net::TcpStream,
+    stream: &mut UnixStream,
     handles: Vec<vk::HANDLE>,
     buf: &mut [u8],
 ) -> std::io::Result<()> {
-    socket.read(buf)?;
+    stream.read(buf)?;
     let value = buf[0];
     debug!("Read {value}");
 
     if value == 1 {
         debug!("Sending handles: {handles:?}");
-        let write = socket.write(bytes_of_slice(&handles)).unwrap();
+        let write = stream.write(bytes_of_slice(&handles)).unwrap();
         debug!("Write {write} bytes");
         return Ok(());
     } else {
