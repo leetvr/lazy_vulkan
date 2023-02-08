@@ -28,11 +28,23 @@ pub struct VulkanContext {
 
 impl VulkanContext {
     pub fn new() -> Self {
-        let (entry, instance) = init(&mut Default::default());
+        Self::new_with_extensions(&[], &[])
+    }
+
+    pub fn new_with_extensions(
+        instance_extensions: &[*const std::ffi::c_char],
+        device_extensions: &[*const std::ffi::c_char],
+    ) -> Self {
+        let (entry, instance) = init(&mut instance_extensions.to_vec());
         let (physical_device, queue_family_index) = get_physical_device(&instance, None, None);
 
         let queue_family_index = queue_family_index as u32;
-        let device = create_device(queue_family_index, &mut vec![], &instance, physical_device);
+        let device = create_device(
+            queue_family_index,
+            &mut device_extensions.to_vec(),
+            &instance,
+            physical_device,
+        );
         let queue = unsafe { device.get_device_queue(queue_family_index, 0) };
         let (command_pool, draw_command_buffer) = create_command_pool(queue_family_index, &device);
         let memory_properties =
