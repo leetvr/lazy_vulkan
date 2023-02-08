@@ -17,6 +17,7 @@ pub struct VulkanContext {
     pub _entry: ash::Entry,
     pub device: ash::Device,
     pub instance: ash::Instance,
+    pub physical_device: vk::PhysicalDevice,
     /// A queue that can call render and transfer commands
     pub queue: vk::Queue,
     /// The command buffer that you'll ultimately submit to be presented/rendered
@@ -54,6 +55,7 @@ impl VulkanContext {
             _entry: entry,
             instance,
             device,
+            physical_device,
             queue,
             draw_command_buffer,
             command_pool,
@@ -138,6 +140,7 @@ impl VulkanContext {
         let context = VulkanContext {
             _entry: entry,
             device,
+            physical_device,
             instance,
             queue: present_queue,
             draw_command_buffer,
@@ -342,7 +345,7 @@ impl VulkanContext {
     }
 }
 
-fn create_command_pool(
+pub fn create_command_pool(
     queue_family_index: u32,
     device: &ash::Device,
 ) -> (vk::CommandPool, vk::CommandBuffer) {
@@ -365,7 +368,7 @@ fn create_command_pool(
     (pool, draw_command_buffer)
 }
 
-fn create_device(
+pub fn create_device(
     queue_family_index: u32,
     extension_names: &mut Vec<*const std::ffi::c_char>,
     instance: &ash::Instance,
@@ -401,7 +404,7 @@ fn create_device(
     device
 }
 
-fn get_physical_device(
+pub fn get_physical_device(
     instance: &ash::Instance,
     surface_loader: Option<&ash::extensions::khr::Surface>,
     surface: Option<&vk::SurfaceKHR>,
@@ -457,7 +460,7 @@ fn get_physical_device(
     (physical_device, queue_family_index as u32)
 }
 
-fn init(extension_names: &mut Vec<*const std::ffi::c_char>) -> (ash::Entry, ash::Instance) {
+pub fn init(extension_names: &mut Vec<*const std::ffi::c_char>) -> (ash::Entry, ash::Instance) {
     #[cfg(any(target_os = "macos", target_os = "ios"))]
     {
         extension_names.push(KhrPortabilityEnumerationFn::name().as_ptr());
