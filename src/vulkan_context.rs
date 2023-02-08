@@ -63,6 +63,34 @@ impl VulkanContext {
         }
     }
 
+    /// Oh? The other helpers weren't good enough for you?
+    ///
+    /// Congratulations, you're insane. Enjoy.
+    pub fn new_with_niche_use_case(
+        entry: ash::Entry,
+        instance: ash::Instance,
+        physical_device: vk::PhysicalDevice,
+        device: ash::Device,
+        queue_family_index: u32,
+    ) -> Self {
+        // I hope all that effort was worth it just to create *four* Vulkan objects. Really. Hats off to you.
+        let queue = unsafe { device.get_device_queue(queue_family_index, 0) };
+        let (command_pool, draw_command_buffer) = create_command_pool(queue_family_index, &device);
+        let memory_properties =
+            unsafe { instance.get_physical_device_memory_properties(physical_device) };
+
+        VulkanContext {
+            _entry: entry,
+            device,
+            instance,
+            physical_device,
+            queue,
+            draw_command_buffer,
+            command_pool,
+            memory_properties,
+        }
+    }
+
     pub fn new_with_surface(window: &Window, window_resolution: vk::Extent2D) -> (Self, Surface) {
         use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 
