@@ -64,6 +64,7 @@ pub struct LazyVulkanBuilder {
     pub initial_indices: Vec<u32>,
     pub initial_vertices: Vec<Vertex>,
     pub with_present: bool,
+    pub window_size: Option<vk::Extent2D>,
 }
 
 impl LazyVulkanBuilder {
@@ -92,10 +93,17 @@ impl LazyVulkanBuilder {
         self
     }
 
+    pub fn window_size(mut self, extent: vk::Extent2D) -> Self {
+        self.window_size = Some(extent);
+        self
+    }
+
     pub fn build<'a>(self) -> (LazyVulkan, LazyRenderer, EventLoop<()>) {
-        let (width, height) = (500, 500);
-        let (event_loop, window) = init_winit(width, height);
-        let window_resolution = vk::Extent2D { width, height };
+        let window_resolution = self.window_size.unwrap_or(vk::Extent2D {
+            width: 500,
+            height: 500,
+        });
+        let (event_loop, window) = init_winit(window_resolution.width, window_resolution.height);
 
         let (vulkan, render_surface) = LazyVulkan::new(window, window_resolution);
         let renderer = LazyRenderer::new(&vulkan.context(), render_surface, &self);
