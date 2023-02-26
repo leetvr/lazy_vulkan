@@ -403,7 +403,7 @@ pub fn create_device(
     physical_device: vk::PhysicalDevice,
 ) -> ash::Device {
     #[cfg(any(target_os = "macos", target_os = "ios"))]
-    extension_names.push(KhrPortabilitySubsetFn::name().as_ptr());
+    extension_names.push(vk::KhrPortabilitySubsetFn::name().as_ptr());
 
     #[cfg(target_os = "windows")]
     extension_names.push(ash::extensions::khr::ExternalMemoryWin32::name().as_ptr());
@@ -491,9 +491,9 @@ pub fn get_physical_device(
 pub fn init(extension_names: &mut Vec<*const std::ffi::c_char>) -> (ash::Entry, ash::Instance) {
     #[cfg(any(target_os = "macos", target_os = "ios"))]
     {
-        extension_names.push(KhrPortabilityEnumerationFn::name().as_ptr());
+        extension_names.push(vk::KhrPortabilityEnumerationFn::name().as_ptr());
         // Enabling this extension is a requirement when using `VK_KHR_portability_subset`
-        extension_names.push(KhrGetPhysicalDeviceProperties2Fn::name().as_ptr());
+        extension_names.push(vk::KhrGetPhysicalDeviceProperties2Fn::name().as_ptr());
     }
 
     let entry = ash::Entry::linked();
