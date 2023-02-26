@@ -5,6 +5,9 @@ use lazy_vulkan::{
 };
 use log::{debug, info};
 use std::io::{Read, Write};
+#[cfg(not(target_os = "windows"))]
+use std::os::unix::net::{UnixListener, UnixStream};
+#[cfg(target_os = "windows")]
 use uds_windows::{UnixListener, UnixStream};
 use winit::{
     event::{ElementState, Event, KeyboardInput, VirtualKeyCode, WindowEvent},
