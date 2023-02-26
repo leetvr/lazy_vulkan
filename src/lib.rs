@@ -5,11 +5,6 @@ pub mod vulkan_context;
 pub mod vulkan_texture;
 
 use ash::vk;
-
-#[cfg(any(target_os = "macos", target_os = "ios"))]
-use ash::vk::{
-    KhrGetPhysicalDeviceProperties2Fn, KhrPortabilityEnumerationFn, KhrPortabilitySubsetFn,
-};
 use glam::{Vec2, Vec4};
 pub use lazy_renderer::{DrawCall, LazyRenderer, Workflow};
 use winit::{event_loop::EventLoop, window::Window};
