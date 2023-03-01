@@ -180,7 +180,7 @@ impl LazyRenderer {
                 .unwrap()
         };
 
-        let framebuffers = create_framebuffers(&render_surface, render_pass, &device);
+        let framebuffers = create_framebuffers(&render_surface, render_pass, device);
 
         let index_buffer = Buffer::new(
             vulkan_context,

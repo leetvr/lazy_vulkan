@@ -3,7 +3,10 @@ use lazy_vulkan::{
     create_swapchain_image_views, DrawCall, SwapchainInfo, Vertex, Workflow, NO_TEXTURE_ID,
 };
 use std::io::{Read, Write};
+#[cfg(not(target_os = "windows"))]
+use std::os::unix::net::UnixStream;
 use std::sync::Mutex;
+#[cfg(target_os = "windows")]
 use uds_windows::UnixStream;
 
 use ash::vk;

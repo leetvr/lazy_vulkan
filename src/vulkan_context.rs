@@ -39,7 +39,6 @@ impl VulkanContext {
         let (entry, instance) = init(&mut instance_extensions.to_vec());
         let (physical_device, queue_family_index) = get_physical_device(&instance, None, None);
 
-        let queue_family_index = queue_family_index as u32;
         let device = create_device(
             queue_family_index,
             &mut device_extensions.to_vec(),
@@ -117,7 +116,6 @@ impl VulkanContext {
         let (physical_device, queue_family_index) =
             get_physical_device(&instance, Some(&surface_loader), Some(&surface));
 
-        let queue_family_index = queue_family_index as u32;
         let mut device_extension_names_raw = vec![ash::extensions::khr::Swapchain::name().as_ptr()];
 
         let device = create_device(
@@ -194,7 +192,7 @@ impl VulkanContext {
         extent: vk::Extent2D,
         format: vk::Format,
     ) -> (vk::Image, vk::DeviceMemory) {
-        let scratch_buffer = Buffer::new(&self, vk::BufferUsageFlags::TRANSFER_SRC, image_data);
+        let scratch_buffer = Buffer::new(self, vk::BufferUsageFlags::TRANSFER_SRC, image_data);
         let device = &self.device;
 
         let image = device
@@ -403,7 +401,7 @@ pub fn create_device(
     physical_device: vk::PhysicalDevice,
 ) -> ash::Device {
     #[cfg(any(target_os = "macos", target_os = "ios"))]
-    extension_names.push(KhrPortabilitySubsetFn::name().as_ptr());
+    extension_names.push(vk::KhrPortabilitySubsetFn::name().as_ptr());
 
     #[cfg(target_os = "windows")]
     extension_names.push(ash::extensions::khr::ExternalMemoryWin32::name().as_ptr());
@@ -421,15 +419,14 @@ pub fn create_device(
 
     let device_create_info = vk::DeviceCreateInfo::builder()
         .queue_create_infos(std::slice::from_ref(&queue_info))
-        .enabled_extension_names(&extension_names)
+        .enabled_extension_names(extension_names)
         .push_next(&mut descriptor_indexing_features);
 
-    let device = unsafe {
+    unsafe {
         instance
             .create_device(physical_device, &device_create_info, None)
             .unwrap()
-    };
-    device
+    }
 }
 
 pub fn get_physical_device(
@@ -480,7 +477,7 @@ pub fn get_physical_device(
             &physical_device_properties.device_name as *const _ as *const u8,
             256,
         );
-        std::ffi::CStr::from_bytes_with_nul_unchecked(&device_name_raw)
+        std::ffi::CStr::from_bytes_with_nul_unchecked(device_name_raw)
             .to_str()
             .unwrap()
     };
@@ -491,9 +488,9 @@ pub fn get_physical_device(
 pub fn init(extension_names: &mut Vec<*const std::ffi::c_char>) -> (ash::Entry, ash::Instance) {
     #[cfg(any(target_os = "macos", target_os = "ios"))]
     {
-        extension_names.push(KhrPortabilityEnumerationFn::name().as_ptr());
+        extension_names.push(vk::KhrPortabilityEnumerationFn::name().as_ptr());
         // Enabling this extension is a requirement when using `VK_KHR_portability_subset`
-        extension_names.push(KhrGetPhysicalDeviceProperties2Fn::name().as_ptr());
+        extension_names.push(vk::KhrGetPhysicalDeviceProperties2Fn::name().as_ptr());
     }
 
     let entry = ash::Entry::linked();
@@ -527,7 +524,7 @@ pub fn init(extension_names: &mut Vec<*const std::ffi::c_char>) -> (ash::Entry, 
     let create_info = vk::InstanceCreateInfo::builder()
         .application_info(&appinfo)
         .flags(create_flags)
-        .enabled_extension_names(&extension_names);
+        .enabled_extension_names(extension_names);
 
     let instance = unsafe {
         entry

@@ -5,11 +5,6 @@ pub mod vulkan_context;
 pub mod vulkan_texture;
 
 use ash::vk;
-
-#[cfg(any(target_os = "macos", target_os = "ios"))]
-use ash::vk::{
-    KhrGetPhysicalDeviceProperties2Fn, KhrPortabilityEnumerationFn, KhrPortabilitySubsetFn,
-};
 use glam::{Vec2, Vec4};
 pub use lazy_renderer::{DrawCall, LazyRenderer, Workflow};
 use winit::{event_loop::EventLoop, window::Window};
@@ -98,7 +93,7 @@ impl LazyVulkanBuilder {
         self
     }
 
-    pub fn build<'a>(self) -> (LazyVulkan, LazyRenderer, EventLoop<()>) {
+    pub fn build(self) -> (LazyVulkan, LazyRenderer, EventLoop<()>) {
         let window_resolution = self.window_size.unwrap_or(vk::Extent2D {
             width: 500,
             height: 500,
@@ -106,7 +101,7 @@ impl LazyVulkanBuilder {
         let (event_loop, window) = init_winit(window_resolution.width, window_resolution.height);
 
         let (vulkan, render_surface) = LazyVulkan::new(window, window_resolution);
-        let renderer = LazyRenderer::new(&vulkan.context(), render_surface, &self);
+        let renderer = LazyRenderer::new(vulkan.context(), render_surface, &self);
 
         (vulkan, renderer, event_loop)
     }
@@ -151,7 +146,7 @@ impl LazyVulkan {
         let (context, surface) = VulkanContext::new_with_surface(&window, window_resolution);
         let device = &context.device;
         let instance = &context.instance;
-        let swapchain_loader = ash::extensions::khr::Swapchain::new(&instance, &device);
+        let swapchain_loader = ash::extensions::khr::Swapchain::new(instance, device);
         let (swapchain, swapchain_images, swapchain_image_views) =
             create_swapchain(&context, &surface, &swapchain_loader, None);
 
