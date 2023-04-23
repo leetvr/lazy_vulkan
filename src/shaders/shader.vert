@@ -9,9 +9,8 @@ layout(location = 1) out vec2 out_uv;
 
 #include "push_constant.glsl"
 
-
 void main() {
-    gl_Position = in_position;
+    gl_Position = mvp * in_position;
     out_colour = in_colour;
     out_uv = in_uv;
 }

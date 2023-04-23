@@ -409,14 +409,23 @@ impl LazyRenderer {
                 &[],
             );
             for draw_call in draw_calls {
-                let mvp = glam::Mat4::IDENTITY;
+                let mut perspective =
+                    glam::Mat4::perspective_rh(60_f32.to_radians(), 1., 0.01, 1000.);
+                perspective.y_axis[1] *= -1.;
+
+                let mvp = perspective
+                    * glam::Affine3A::look_at_rh(
+                        [1., 0., 2.0].into(),
+                        glam::Vec3::ZERO,
+                        glam::Vec3::Y,
+                    );
 
                 device.cmd_push_constants(
                     command_buffer,
                     self.pipeline_layout,
                     vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
                     0,
-                    bytemuck::bytes_of(&PushConstant::new(draw_call.texture_id, mvp)),
+                    bytemuck::bytes_of(&PushConstant::new(draw_call.texture_id, mvp.into())),
                 );
 
                 // Draw the mesh with the indexes we were provided
