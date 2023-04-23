@@ -165,11 +165,12 @@ impl LazyVulkan {
                 .unwrap()
         };
 
-        let render_surface = RenderSurface {
-            resolution: surface.surface_resolution,
-            format: surface.surface_format.format,
-            image_views: swapchain_image_views,
-        };
+        let render_surface = RenderSurface::new(
+            &context,
+            surface.surface_resolution,
+            surface.surface_format.format,
+            swapchain_image_views,
+        );
 
         (
             Self {
@@ -207,13 +208,12 @@ impl LazyVulkan {
             self.destroy_swapchain(self.swapchain);
             self.swapchain = new_swapchain;
 
-            println!("OK! Swapchain recreated");
-
-            RenderSurface {
-                resolution: self.surface.surface_resolution,
-                format: self.surface.surface_format.format,
-                image_views: new_present_image_views,
-            }
+            RenderSurface::new(
+                &self.context,
+                self.surface.surface_resolution,
+                self.surface.surface_format.format,
+                new_present_image_views,
+            )
         }
     }
 

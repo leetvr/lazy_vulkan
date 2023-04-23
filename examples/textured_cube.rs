@@ -1,3 +1,6 @@
+use std::f32::consts::TAU;
+
+use glam::Affine3A;
 use lazy_vulkan::{DrawCall, LazyVulkan, Vertex, NO_TEXTURE_ID};
 use winit::{
     event::{ElementState, Event, KeyboardInput, VirtualKeyCode, WindowEvent},
@@ -7,9 +10,7 @@ use winit::{
 pub fn main() {
     env_logger::init();
 
-    // Oh, you thought you could supply your own Vertex type? What is this, a rendergraph?!
-    // Better make sure those shaders use the right layout!
-    // **LAUGHS IN VULKAN**
+    // SQUUUUUUUUUUUUUUUARRRRRRRRRE
     let vertices = [
         Vertex::new([1.0, 1.0, 0.0, 1.0], [1.0, 0.0, 0.0, 0.0], [0.0, 0.0]),
         Vertex::new([-1.0, 1.0, 0.0, 1.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0]),
@@ -17,7 +18,6 @@ pub fn main() {
         Vertex::new([1.0, -1.0, 0.0, 1.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0]),
     ];
 
-    // Your own index type?! What are you going to use, `u16`?
     let indices = [0, 1, 2, 2, 3, 0];
 
     // Alright, let's build some stuff
@@ -26,6 +26,12 @@ pub fn main() {
         .initial_indices(&indices)
         .with_present(true)
         .build();
+
+    lazy_renderer.camera.position.y = 2.;
+    lazy_renderer.camera.position.z = 10.;
+    lazy_renderer.camera.pitch = -15_f32.to_radians();
+
+    let draw_calls = create_draw_calls();
 
     // Off we go!
     // TODO: How do we share this between examples?
@@ -58,11 +64,7 @@ pub fn main() {
 
             Event::MainEventsCleared => {
                 let framebuffer_index = lazy_vulkan.render_begin();
-                lazy_renderer.render(
-                    &lazy_vulkan.context(),
-                    framebuffer_index,
-                    &[DrawCall::new(0, indices.len() as _, NO_TEXTURE_ID)],
-                );
+                lazy_renderer.render(&lazy_vulkan.context(), framebuffer_index, &draw_calls);
                 lazy_vulkan
                     .render_end(framebuffer_index, &[lazy_vulkan.present_complete_semaphore]);
             }
@@ -85,4 +87,20 @@ pub fn main() {
     unsafe {
         lazy_renderer.cleanup(&lazy_vulkan.context().device);
     }
+}
+
+fn create_draw_calls() -> Vec<DrawCall> {
+    let number_of_quads = 9;
+    let slice_theta = TAU / (number_of_quads as f32);
+    let radius = 3.;
+
+    (0..number_of_quads)
+        .map(|n| {
+            let theta = n as f32 * slice_theta;
+            let x = radius * theta.cos();
+            let z = radius * theta.sin();
+            let transform = Affine3A::from_translation([x, 0., z].into());
+            DrawCall::new(0, 6, NO_TEXTURE_ID, transform)
+        })
+        .collect()
 }

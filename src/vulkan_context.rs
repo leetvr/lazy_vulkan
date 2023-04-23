@@ -2,7 +2,7 @@ use ash::vk;
 use log::info;
 use winit::window::Window;
 
-use crate::{buffer::Buffer, find_memorytype_index, Surface};
+use crate::{buffer::Buffer, find_memorytype_index, lazy_renderer::DEPTH_FORMAT, Surface};
 
 #[derive(Clone)]
 /// A wrapper around handles into your Vulkan renderer to call various methods on [`crate::YakuiVulkan`]
@@ -195,6 +195,11 @@ impl VulkanContext {
         let scratch_buffer = Buffer::new(self, vk::BufferUsageFlags::TRANSFER_SRC, image_data);
         let device = &self.device;
 
+        let usage = match format {
+            DEPTH_FORMAT => vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
+            _ => vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
+        };
+
         let image = device
             .create_image(
                 &vk::ImageCreateInfo {
@@ -205,7 +210,7 @@ impl VulkanContext {
                     array_layers: 1,
                     samples: vk::SampleCountFlags::TYPE_1,
                     tiling: vk::ImageTiling::OPTIMAL,
-                    usage: vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
+                    usage,
                     sharing_mode: vk::SharingMode::EXCLUSIVE,
                     ..Default::default()
                 },
@@ -222,6 +227,11 @@ impl VulkanContext {
         .expect("Unable to find suitable memory type for image");
         let image_memory = self.allocate_memory(memory_requirements.size, memory_index);
         device.bind_image_memory(image, image_memory, 0).unwrap();
+
+        // If we weren't given any image data, we can just return now
+        if image_data.is_empty() {
+            return (image, image_memory);
+        }
 
         self.one_time_command(|command_buffer| {
             let transfer_barrier = vk::ImageMemoryBarrier {
@@ -351,13 +361,17 @@ impl VulkanContext {
     }
 
     pub unsafe fn create_image_view(&self, image: vk::Image, format: vk::Format) -> vk::ImageView {
+        let aspect_mask = match format {
+            DEPTH_FORMAT => vk::ImageAspectFlags::DEPTH,
+            _ => vk::ImageAspectFlags::COLOR,
+        };
         self.device
             .create_image_view(
                 &vk::ImageViewCreateInfo {
                     image,
                     format,
                     subresource_range: vk::ImageSubresourceRange {
-                        aspect_mask: vk::ImageAspectFlags::COLOR,
+                        aspect_mask,
                         level_count: 1,
                         layer_count: 1,
                         ..Default::default()

@@ -1,9 +1,10 @@
-use crate::buffer::Buffer;
-use crate::descriptors::Descriptors;
-use crate::vulkan_context::VulkanContext;
-use crate::vulkan_texture::VulkanTexture;
-use crate::vulkan_texture::VulkanTextureCreateInfo;
-use crate::{LazyVulkanBuilder, Vertex};
+use crate::{
+    buffer::Buffer,
+    descriptors::Descriptors,
+    vulkan_context::VulkanContext,
+    vulkan_texture::{VulkanTexture, VulkanTextureCreateInfo},
+    LazyVulkanBuilder, Vertex,
+};
 use std::ffi::CStr;
 
 use ash::vk;
@@ -14,6 +15,7 @@ use vk_shader_macros::include_glsl;
 
 const VERTEX_SHADER: &[u32] = include_glsl!("src/shaders/shader.vert");
 const FRAGMENT_SHADER: &[u32] = include_glsl!("src/shaders/shader.frag");
+pub const DEPTH_FORMAT: vk::Format = vk::Format::D32_SFLOAT;
 
 /// HELLO WOULD YOU LIKE TO RENDER SOME THINGS????
 pub struct LazyRenderer {
@@ -35,6 +37,8 @@ pub struct LazyRenderer {
     user_textures: thunderdome::Arena<VulkanTexture>,
     /// A wrapper around descriptor set functionality
     pub descriptors: Descriptors,
+    /// You know. A camera.
+    pub camera: Camera,
 }
 
 #[derive(Clone)]
@@ -46,6 +50,65 @@ pub struct RenderSurface {
     pub format: vk::Format,
     /// The image views to render to. One framebuffer will be created per view
     pub image_views: Vec<vk::ImageView>,
+    /// The depth buffers; one per view
+    pub depth_buffers: Vec<DepthBuffer>,
+}
+
+impl RenderSurface {
+    pub fn new(
+        vulkan_context: &VulkanContext,
+        resolution: vk::Extent2D,
+        format: vk::Format,
+        image_views: Vec<vk::ImageView>,
+    ) -> Self {
+        let depth_buffers = create_depth_buffers(vulkan_context, resolution, image_views.len());
+        Self {
+            resolution,
+            format,
+            image_views,
+            depth_buffers,
+        }
+    }
+
+    /// Safety:
+    ///
+    /// After you call this method.. like.. don't use this struct again, basically.
+    unsafe fn destroy(&mut self, device: &ash::Device) {
+        self.image_views
+            .drain(..)
+            .for_each(|v| device.destroy_image_view(v, None));
+        self.depth_buffers.drain(..).for_each(|d| {
+            d.destory(device);
+        });
+    }
+}
+
+#[derive(Clone, Default)]
+pub struct Camera {
+    pub position: glam::Vec3,
+    pub pitch: f32,
+    pub yaw: f32,
+}
+
+impl Camera {
+    pub fn matrix(&self) -> glam::Affine3A {
+        let rotation = glam::Quat::from_euler(glam::EulerRot::YXZ, self.yaw, self.pitch, 0.);
+        glam::Affine3A::from_rotation_translation(rotation, self.position).inverse()
+    }
+}
+
+#[derive(Clone)]
+pub struct DepthBuffer {
+    pub image: vk::Image,
+    pub view: vk::ImageView,
+    pub memory: vk::DeviceMemory,
+}
+impl DepthBuffer {
+    unsafe fn destory(&self, device: &ash::Device) {
+        device.destroy_image_view(self.view, None);
+        device.destroy_image(self.image, None);
+        device.free_memory(self.memory, None);
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -54,14 +117,21 @@ pub struct DrawCall {
     index_offset: u32,
     index_count: u32,
     texture_id: u32,
+    transform: glam::Affine3A,
 }
 
 impl DrawCall {
-    pub fn new(index_offset: u32, index_count: u32, texture_id: u32) -> Self {
+    pub fn new(
+        index_offset: u32,
+        index_count: u32,
+        texture_id: u32,
+        transform: glam::Affine3A,
+    ) -> Self {
         Self {
             index_offset,
             index_count,
             texture_id,
+            transform,
         }
     }
 }
@@ -102,30 +172,57 @@ impl LazyRenderer {
             vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL
         };
 
-        // TODO: Don't write directly to the present surface..
-        let renderpass_attachments = [vk::AttachmentDescription {
-            format: render_surface.format,
-            samples: vk::SampleCountFlags::TYPE_1,
-            load_op: vk::AttachmentLoadOp::CLEAR,
-            store_op: vk::AttachmentStoreOp::STORE,
-            final_layout,
-            ..Default::default()
-        }];
+        let renderpass_attachments = [
+            vk::AttachmentDescription {
+                format: render_surface.format,
+                samples: vk::SampleCountFlags::TYPE_1,
+                load_op: vk::AttachmentLoadOp::CLEAR,
+                store_op: vk::AttachmentStoreOp::STORE,
+                final_layout,
+                ..Default::default()
+            },
+            vk::AttachmentDescription {
+                format: DEPTH_FORMAT,
+                samples: vk::SampleCountFlags::TYPE_1,
+                load_op: vk::AttachmentLoadOp::CLEAR,
+                store_op: vk::AttachmentStoreOp::DONT_CARE,
+                final_layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                ..Default::default()
+            },
+        ];
+
         let color_attachment_refs = [vk::AttachmentReference {
             attachment: 0,
             layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
         }];
-        let dependencies = [vk::SubpassDependency {
-            src_subpass: vk::SUBPASS_EXTERNAL,
-            src_stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
-            dst_access_mask: vk::AccessFlags::COLOR_ATTACHMENT_READ
-                | vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
-            dst_stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
-            ..Default::default()
-        }];
+
+        let depth_attachment_ref = vk::AttachmentReference {
+            attachment: 1,
+            layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+        };
+
+        let dependencies = [
+            vk::SubpassDependency {
+                src_subpass: vk::SUBPASS_EXTERNAL,
+                src_stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+                dst_access_mask: vk::AccessFlags::COLOR_ATTACHMENT_READ
+                    | vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
+                dst_stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+                ..Default::default()
+            },
+            vk::SubpassDependency {
+                src_subpass: vk::SUBPASS_EXTERNAL,
+                src_stage_mask: vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS,
+                dst_access_mask: vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_READ
+                    | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+                dst_stage_mask: vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
+                ..Default::default()
+            },
+        ];
 
         let subpass = vk::SubpassDescription::builder()
             .color_attachments(&color_attachment_refs)
+            .depth_stencil_attachment(&depth_attachment_ref)
             .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS);
 
         let renderpass_create_info = vk::RenderPassCreateInfo::builder()
@@ -333,6 +430,7 @@ impl LazyRenderer {
             index_buffer,
             vertex_buffer,
             user_textures: Default::default(),
+            camera: Default::default(),
         }
     }
 
@@ -408,18 +506,15 @@ impl LazyRenderer {
                 std::slice::from_ref(&self.descriptors.set),
                 &[],
             );
+
+            let aspect_ratio = self.render_surface.resolution.width as f32
+                / self.render_surface.resolution.height as f32;
+            let mut perspective =
+                glam::Mat4::perspective_rh(60_f32.to_radians(), aspect_ratio, 0.01, 1000.);
+            perspective.y_axis[1] *= -1.;
+
             for draw_call in draw_calls {
-                let mut perspective =
-                    glam::Mat4::perspective_rh(60_f32.to_radians(), 1., 0.01, 1000.);
-                perspective.y_axis[1] *= -1.;
-
-                let mvp = perspective
-                    * glam::Affine3A::look_at_rh(
-                        [1., 0., 2.0].into(),
-                        glam::Vec3::ZERO,
-                        glam::Vec3::Y,
-                    );
-
+                let mvp: glam::Mat4 = perspective * self.camera.matrix() * draw_call.transform;
                 device.cmd_push_constants(
                     command_buffer,
                     self.pipeline_layout,
@@ -486,6 +581,7 @@ impl LazyRenderer {
     /// - You must use the same [`ash::Device`] used to create this instance
     pub fn update_surface(&mut self, render_surface: RenderSurface, device: &ash::Device) {
         unsafe {
+            self.render_surface.destroy(device);
             self.destroy_framebuffers(device);
         }
         self.framebuffers = create_framebuffers(&render_surface, self.render_pass, device);
@@ -507,8 +603,9 @@ fn create_framebuffers(
     let framebuffers: Vec<vk::Framebuffer> = render_surface
         .image_views
         .iter()
-        .map(|&present_image_view| {
-            let framebuffer_attachments = [present_image_view];
+        .zip(&render_surface.depth_buffers)
+        .map(|(&present_image_view, depth_buffer)| {
+            let framebuffer_attachments = [present_image_view, depth_buffer.view];
             let frame_buffer_create_info = vk::FramebufferCreateInfo::builder()
                 .render_pass(render_pass)
                 .attachments(&framebuffer_attachments)
@@ -524,4 +621,24 @@ fn create_framebuffers(
         })
         .collect();
     framebuffers
+}
+
+fn create_depth_buffers(
+    vulkan_context: &VulkanContext,
+    resolution: vk::Extent2D,
+    len: usize,
+) -> Vec<DepthBuffer> {
+    (0..len)
+        .map(|_| {
+            let (image, memory) =
+                unsafe { vulkan_context.create_image(&[], resolution, DEPTH_FORMAT) };
+            let view = unsafe { vulkan_context.create_image_view(image, DEPTH_FORMAT) };
+
+            DepthBuffer {
+                image,
+                view,
+                memory,
+            }
+        })
+        .collect::<Vec<_>>()
 }

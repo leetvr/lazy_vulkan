@@ -60,7 +60,12 @@ pub fn main() {
                 lazy_renderer.render(
                     &lazy_vulkan.context(),
                     framebuffer_index,
-                    &[DrawCall::new(0, 3, NO_TEXTURE_ID)],
+                    &[DrawCall::new(
+                        0,
+                        indices.len() as _,
+                        NO_TEXTURE_ID,
+                        Default::default(),
+                    )],
                 );
                 lazy_vulkan
                     .render_end(framebuffer_index, &[lazy_vulkan.present_complete_semaphore]);

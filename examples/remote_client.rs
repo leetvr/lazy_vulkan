@@ -72,16 +72,17 @@ pub fn main() -> std::io::Result<()> {
         &vulkan_context.device,
     );
 
-    let render_surface = lazy_vulkan::lazy_renderer::RenderSurface {
-        resolution: swapchain_info.resolution,
-        format: swapchain_info.format,
+    let render_surface = lazy_vulkan::lazy_renderer::RenderSurface::new(
+        &vulkan_context,
+        swapchain_info.resolution,
+        swapchain_info.format,
         image_views,
-    };
+    );
 
     let mut renderer =
         lazy_vulkan::lazy_renderer::LazyRenderer::new(&vulkan_context, render_surface, &builder);
 
-    let draw_calls = [DrawCall::new(0, 3, NO_TEXTURE_ID)];
+    let draw_calls = [DrawCall::new(0, 3, NO_TEXTURE_ID, Default::default())];
     let fences = create_fences(&vulkan_context, swapchain_info.image_count);
     let command_buffers = create_command_buffers(&vulkan_context, swapchain_info.image_count);
 
