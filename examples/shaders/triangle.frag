@@ -10,7 +10,6 @@ layout (location = 0) out vec4 out_color;
 layout(set = 0, binding = 0) uniform sampler2D textures[16];
 layout(push_constant) uniform push_constants {
     uint texture_id;
-    uint workflow;
 };
 
 void main() {
@@ -19,11 +18,6 @@ void main() {
         return;
     } 
     
-    if (workflow == WORKFLOW_TEXT) {
-        float coverage = texture(textures[texture_id], in_uv).r;
-        out_color = in_color * coverage;
-    } else {
-        vec4 user_texture = texture(textures[texture_id], in_uv);
-        out_color = in_color * user_texture;
-    }
+    vec4 user_texture = texture(textures[texture_id], in_uv);
+    out_color = in_color * user_texture;
 }

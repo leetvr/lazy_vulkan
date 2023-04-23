@@ -23,6 +23,7 @@ use crate::vulkan_texture::VulkanTextureCreateInfo;
 use crate::{LazyVulkanBuilder, Vertex};
 use std::{ffi::CStr, io::Cursor};
 
+use ash::vk::PushConstantRange;
 use ash::{util::read_spv, vk};
 use bytemuck::{Pod, Zeroable};
 use thunderdome::Index;
@@ -77,16 +78,14 @@ pub struct DrawCall {
     index_offset: u32,
     index_count: u32,
     texture_id: u32,
-    workflow: Workflow,
 }
 
 impl DrawCall {
-    pub fn new(index_offset: u32, index_count: u32, texture_id: u32, workflow: Workflow) -> Self {
+    pub fn new(index_offset: u32, index_count: u32, texture_id: u32) -> Self {
         Self {
             index_offset,
             index_count,
             texture_id,
-            workflow,
         }
     }
 }
@@ -94,33 +93,18 @@ impl DrawCall {
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 /// Push constant used to determine texture and workflow
-struct PushConstant {
+struct FragmentPushConstant {
     texture_id: u32,
-    workflow: Workflow,
 }
 
-unsafe impl Zeroable for PushConstant {}
-unsafe impl Pod for PushConstant {}
+unsafe impl Zeroable for FragmentPushConstant {}
+unsafe impl Pod for FragmentPushConstant {}
 
-impl PushConstant {
-    pub fn new(texture_id: u32, workflow: Workflow) -> Self {
-        Self {
-            texture_id,
-            workflow,
-        }
+impl FragmentPushConstant {
+    pub fn new(texture_id: u32) -> Self {
+        Self { texture_id }
     }
 }
-
-#[repr(u32)]
-#[derive(Clone, Copy, Debug)]
-/// The workflow to use in the shader
-pub enum Workflow {
-    Main,
-    Text,
-}
-
-unsafe impl Zeroable for Workflow {}
-unsafe impl bytemuck::Pod for Workflow {}
 
 impl LazyRenderer {
     /// Create a new [`LazyRenderer`] instance. Currently only supports rendering directly to the swapchain.
@@ -220,11 +204,11 @@ impl LazyRenderer {
             device
                 .create_pipeline_layout(
                     &vk::PipelineLayoutCreateInfo::builder()
-                        .push_constant_ranges(std::slice::from_ref(
-                            &vk::PushConstantRange::builder()
-                                .stage_flags(vk::ShaderStageFlags::FRAGMENT)
-                                .size(std::mem::size_of::<PushConstant>() as _),
-                        ))
+                        .push_constant_ranges(&[PushConstantRange {
+                            size: std::mem::size_of::<FragmentPushConstant>() as _,
+                            stage_flags: vk::ShaderStageFlags::FRAGMENT,
+                            ..Default::default()
+                        }])
                         .set_layouts(std::slice::from_ref(&descriptors.layout)),
                     None,
                 )
@@ -457,6 +441,7 @@ impl LazyRenderer {
                 &[],
             );
             for draw_call in draw_calls {
+                let mvp = glam::Mat4::IDENTITY;
                 // Instead of using different pipelines for text and non-text rendering, we just
                 // pass the "workflow" down through a push constant and branch in the shader.
                 device.cmd_push_constants(
@@ -464,10 +449,7 @@ impl LazyRenderer {
                     self.pipeline_layout,
                     vk::ShaderStageFlags::FRAGMENT,
                     0,
-                    bytemuck::bytes_of(&PushConstant::new(
-                        draw_call.texture_id,
-                        draw_call.workflow,
-                    )),
+                    bytemuck::bytes_of(&FragmentPushConstant::new(draw_call.texture_id)),
                 );
 
                 // Draw the mesh with the indexes we were provided

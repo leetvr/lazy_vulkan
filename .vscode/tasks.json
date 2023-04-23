@@ -6,7 +6,7 @@
 			"command": "run",
 			"args": [
 				"--example",
-				"triangle"
+				"textured_cube"
 			],
 			"problemMatcher": [
 				"$rustc"

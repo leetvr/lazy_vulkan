@@ -6,7 +6,7 @@ pub mod vulkan_texture;
 
 use ash::vk;
 use glam::{Vec2, Vec4};
-pub use lazy_renderer::{DrawCall, LazyRenderer, Workflow};
+pub use lazy_renderer::{DrawCall, LazyRenderer};
 use winit::{event_loop::EventLoop, window::Window};
 
 pub use crate::vulkan_texture::NO_TEXTURE_ID;

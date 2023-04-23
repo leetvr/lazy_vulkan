@@ -1,7 +1,5 @@
 use lazy_vulkan::vulkan_context::VulkanContext;
-use lazy_vulkan::{
-    create_swapchain_image_views, DrawCall, SwapchainInfo, Vertex, Workflow, NO_TEXTURE_ID,
-};
+use lazy_vulkan::{create_swapchain_image_views, DrawCall, SwapchainInfo, Vertex, NO_TEXTURE_ID};
 use std::io::{Read, Write};
 #[cfg(not(target_os = "windows"))]
 use std::os::unix::net::UnixStream;
@@ -89,7 +87,7 @@ pub fn main() -> std::io::Result<()> {
     let mut renderer =
         lazy_vulkan::lazy_renderer::LazyRenderer::new(&vulkan_context, render_surface, &builder);
 
-    let draw_calls = [DrawCall::new(0, 3, NO_TEXTURE_ID, Workflow::Main)];
+    let draw_calls = [DrawCall::new(0, 3, NO_TEXTURE_ID)];
     let fences = create_fences(&vulkan_context, swapchain_info.image_count);
     let command_buffers = create_command_buffers(&vulkan_context, swapchain_info.image_count);
 

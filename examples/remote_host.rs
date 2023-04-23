@@ -107,12 +107,7 @@ pub fn main() {
                 lazy_renderer.render(
                     lazy_vulkan.context(),
                     framebuffer_index,
-                    &[DrawCall::new(
-                        0,
-                        indices.len() as _,
-                        texture_id,
-                        lazy_vulkan::Workflow::Main,
-                    )],
+                    &[DrawCall::new(0, indices.len() as _, texture_id)],
                 );
 
                 let semaphore = semaphores[framebuffer_index as usize];

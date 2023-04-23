@@ -17,11 +17,12 @@ pub fn main() {
     let vertices = [
         Vertex::new([1.0, 1.0, 0.0, 1.0], [1.0, 0.0, 0.0, 0.0], [0.0, 0.0]),
         Vertex::new([-1.0, 1.0, 0.0, 1.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0]),
-        Vertex::new([0.0, -1.0, 0.0, 1.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0]),
+        Vertex::new([-1.0, -1.0, 0.0, 1.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0]),
+        Vertex::new([1.0, -1.0, 0.0, 1.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0]),
     ];
 
     // Your own index type?! What are you going to use, `u16`?
-    let indices = [0, 1, 2];
+    let indices = [0, 1, 2, 2, 3, 0];
 
     // Alright, let's build some stuff
     let (mut lazy_vulkan, mut lazy_renderer, mut event_loop) = LazyVulkan::builder()
@@ -33,6 +34,7 @@ pub fn main() {
         .build();
 
     // Off we go!
+    // TODO: How do we share this between examples?
     let mut winit_initializing = true;
     event_loop.run_return(|event, _, control_flow| {
         *control_flow = ControlFlow::Poll;
@@ -65,7 +67,7 @@ pub fn main() {
                 lazy_renderer.render(
                     &lazy_vulkan.context(),
                     framebuffer_index,
-                    &[DrawCall::new(0, 3, NO_TEXTURE_ID)],
+                    &[DrawCall::new(0, indices.len() as _, NO_TEXTURE_ID)],
                 );
                 lazy_vulkan
                     .render_end(framebuffer_index, &[lazy_vulkan.present_complete_semaphore]);
@@ -75,7 +77,7 @@ pub fn main() {
                 ..
             } => {
                 if winit_initializing {
-                    println!("Ignoring resize during init!");
+                    return;
                 } else {
                     let new_render_surface = lazy_vulkan.resized(size.width, size.height);
                     lazy_renderer.update_surface(new_render_surface, &lazy_vulkan.context().device);
