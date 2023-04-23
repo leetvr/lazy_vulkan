@@ -8,9 +8,8 @@ layout (location = 1) in vec2 in_uv;
 layout (location = 0) out vec4 out_color;
 
 layout(set = 0, binding = 0) uniform sampler2D textures[16];
-layout(push_constant) uniform push_constants {
-    uint texture_id;
-};
+
+#include "push_constant.glsl"
 
 void main() {
     if (texture_id == NO_TEXTURE) {

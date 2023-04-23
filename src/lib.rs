@@ -54,8 +54,6 @@ pub fn find_memorytype_index(
 
 #[derive(Default, Debug, Clone)]
 pub struct LazyVulkanBuilder {
-    pub fragment_shader: Option<Vec<u8>>,
-    pub vertex_shader: Option<Vec<u8>>,
     pub initial_indices: Vec<u32>,
     pub initial_vertices: Vec<Vertex>,
     pub with_present: bool,
@@ -63,16 +61,6 @@ pub struct LazyVulkanBuilder {
 }
 
 impl LazyVulkanBuilder {
-    pub fn fragment_shader(mut self, shader: &[u8]) -> Self {
-        self.fragment_shader = Some(shader.to_vec());
-        self
-    }
-
-    pub fn vertex_shader(mut self, shader: &[u8]) -> Self {
-        self.vertex_shader = Some(shader.to_vec());
-        self
-    }
-
     pub fn initial_vertices(mut self, vertices: &[Vertex]) -> Self {
         self.initial_vertices = vertices.to_vec();
         self

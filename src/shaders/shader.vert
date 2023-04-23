@@ -7,6 +7,9 @@ layout(location = 2) in vec2 in_uv;
 layout(location = 0) out vec4 out_colour;
 layout(location = 1) out vec2 out_uv;
 
+#include "push_constant.glsl"
+
+
 void main() {
     gl_Position = in_position;
     out_colour = in_colour;

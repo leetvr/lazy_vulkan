@@ -1,45 +1,21 @@
-//! A Vulkan backend for the [`yakui`] crate. Uses [`ash`] to wrap Vulkan related functionality.
-//!
-//! The main entrypoint is the [`YakuiVulkan`] struct which creates a [`ash::vk::RenderPass`] and [`ash::vk::Pipeline`]
-//! to draw yakui GUIs. This is initialised by populating a [`VulkanContext`] helper struct to pass down the relevant hooks
-//! into your Vulkan renderer.
-//!
-//! Like most Vulkan applications, this crate uses unsafe Rust! No checks are made to ensure that Vulkan handles are valid,
-//! so take note of the safety warnings on the various methods of [`YakuiVulkan`].
-//!
-//! Currently this crate only supports drawing to images in the `VK_IMAGE_LAYOUT_PRESENT_SRC_KHR` layout, but future
-//! releases will support drawing to any arbitrary [`vk::ImageView`].
-//!
-//! This crate requires at least Vulkan 1.2 and a GPU with support for `VkPhysicalDeviceDescriptorIndexingFeatures.descriptorBindingPartiallyBound`.
-//! You should also, you know, enable that feature, or Vulkan Validation Layers will get mad at you. You definitely don't want that.
-//!
-//! For an example of how to use this crate, check out the cleverly named `it_works` test in `lib.rs` in the GitHub repo.
-
 use crate::buffer::Buffer;
 use crate::descriptors::Descriptors;
 use crate::vulkan_context::VulkanContext;
 use crate::vulkan_texture::VulkanTexture;
 use crate::vulkan_texture::VulkanTextureCreateInfo;
 use crate::{LazyVulkanBuilder, Vertex};
-use std::{ffi::CStr, io::Cursor};
+use std::ffi::CStr;
 
+use ash::vk;
 use ash::vk::PushConstantRange;
-use ash::{util::read_spv, vk};
 use bytemuck::{Pod, Zeroable};
 use thunderdome::Index;
+use vk_shader_macros::include_glsl;
 
-/// A struct wrapping everything needed to render yakui on Vulkan. This will be your main entry point.
-///
-/// Uses a simple descriptor system that requires at least Vulkan 1.2 and [VkPhysicalDeviceDescriptorIndexingFeatures](https://registry.khronos.org/vulkan/specs/1.3-extensions/man/html/VkPhysicalDeviceDescriptorIndexingFeatures.html)
-/// `descriptorBindingPartiallyBound` to be enabled.
-///
-/// Note that this implementation is currently only able to render to a present surface (ie. the swapchain).
-/// Future versions will support drawing to any `vk::ImageView`
-///
-/// Construct the struct by populating a [`VulkanContext`] with the relevant handles to your Vulkan renderer and
-/// call [`YakuiVulkan::new()`].
-///
-/// Make sure to call [`YakuiVulkan::cleanup()`].
+const VERTEX_SHADER: &[u32] = include_glsl!("src/shaders/shader.vert");
+const FRAGMENT_SHADER: &[u32] = include_glsl!("src/shaders/shader.frag");
+
+/// HELLO WOULD YOU LIKE TO RENDER SOME THINGS????
 pub struct LazyRenderer {
     /// The render pass used to draw
     render_pass: vk::RenderPass,
@@ -93,16 +69,17 @@ impl DrawCall {
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 /// Push constant used to determine texture and workflow
-struct FragmentPushConstant {
+struct PushConstant {
+    mvp: glam::Mat4,
     texture_id: u32,
 }
 
-unsafe impl Zeroable for FragmentPushConstant {}
-unsafe impl Pod for FragmentPushConstant {}
+unsafe impl Zeroable for PushConstant {}
+unsafe impl Pod for PushConstant {}
 
-impl FragmentPushConstant {
-    pub fn new(texture_id: u32) -> Self {
-        Self { texture_id }
+impl PushConstant {
+    pub fn new(texture_id: u32, mvp: glam::Mat4) -> Self {
+        Self { texture_id, mvp }
     }
 }
 
@@ -117,8 +94,6 @@ impl LazyRenderer {
         render_surface: RenderSurface,
         builder: &LazyVulkanBuilder,
     ) -> Self {
-        let vertex_shader = builder.vertex_shader.as_ref().unwrap();
-        let fragment_shader = builder.fragment_shader.as_ref().unwrap();
         let device = &vulkan_context.device;
         let descriptors = Descriptors::new(vulkan_context);
         let final_layout = if builder.with_present {
@@ -177,16 +152,8 @@ impl LazyRenderer {
             &builder.initial_vertices,
         );
 
-        let mut vertex_spv_file = Cursor::new(vertex_shader);
-        let mut frag_spv_file = Cursor::new(fragment_shader);
-
-        let vertex_code =
-            read_spv(&mut vertex_spv_file).expect("Failed to read vertex shader spv file");
-        let vertex_shader_info = vk::ShaderModuleCreateInfo::builder().code(&vertex_code);
-
-        let frag_code =
-            read_spv(&mut frag_spv_file).expect("Failed to read fragment shader spv file");
-        let frag_shader_info = vk::ShaderModuleCreateInfo::builder().code(&frag_code);
+        let vertex_shader_info = vk::ShaderModuleCreateInfo::builder().code(VERTEX_SHADER);
+        let frag_shader_info = vk::ShaderModuleCreateInfo::builder().code(FRAGMENT_SHADER);
 
         let vertex_shader_module = unsafe {
             device
@@ -205,8 +172,9 @@ impl LazyRenderer {
                 .create_pipeline_layout(
                     &vk::PipelineLayoutCreateInfo::builder()
                         .push_constant_ranges(&[PushConstantRange {
-                            size: std::mem::size_of::<FragmentPushConstant>() as _,
-                            stage_flags: vk::ShaderStageFlags::FRAGMENT,
+                            size: std::mem::size_of::<PushConstant>() as _,
+                            stage_flags: vk::ShaderStageFlags::VERTEX
+                                | vk::ShaderStageFlags::FRAGMENT,
                             ..Default::default()
                         }])
                         .set_layouts(std::slice::from_ref(&descriptors.layout)),
@@ -442,14 +410,13 @@ impl LazyRenderer {
             );
             for draw_call in draw_calls {
                 let mvp = glam::Mat4::IDENTITY;
-                // Instead of using different pipelines for text and non-text rendering, we just
-                // pass the "workflow" down through a push constant and branch in the shader.
+
                 device.cmd_push_constants(
                     command_buffer,
                     self.pipeline_layout,
-                    vk::ShaderStageFlags::FRAGMENT,
+                    vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
                     0,
-                    bytemuck::bytes_of(&FragmentPushConstant::new(draw_call.texture_id)),
+                    bytemuck::bytes_of(&PushConstant::new(draw_call.texture_id, mvp)),
                 );
 
                 // Draw the mesh with the indexes we were provided

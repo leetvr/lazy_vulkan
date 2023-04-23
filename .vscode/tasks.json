@@ -2,18 +2,21 @@
 	"version": "2.0.0",
 	"tasks": [
 		{
-			"type": "cargo",
-			"command": "run",
+			"type": "shell",
+			"command": "glslc.exe",
 			"args": [
+				"examples/shaders/triangle.vert",
+				"-o",
+				"examples/shaders/triangle.vert.spv",
+				";",
+				"cargo",
+				"run",
 				"--example",
 				"textured_cube"
 			],
 			"problemMatcher": [
 				"$rustc"
 			],
-			"env": {
-				"RUST_LOG": "debug",
-			},
 			"group": {
 				"kind": "test",
 				"isDefault": true

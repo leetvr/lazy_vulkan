@@ -10,10 +10,6 @@ use uds_windows::UnixStream;
 use ash::vk;
 use log::{debug, error, info};
 
-/// Compile your own damn shaders! LazyVulkan is just as lazy as you are!
-static FRAGMENT_SHADER: &'static [u8] = include_bytes!("shaders/triangle.frag.spv");
-static VERTEX_SHADER: &'static [u8] = include_bytes!("shaders/triangle.vert.spv");
-
 #[derive(Debug, Clone)]
 pub enum Color {
     Blue,
@@ -51,8 +47,6 @@ pub fn main() -> std::io::Result<()> {
     // Alright, let's build some stuff
     let mut vulkan_context = lazy_vulkan::vulkan_context::VulkanContext::new();
     let builder = lazy_vulkan::LazyVulkan::builder()
-        .fragment_shader(FRAGMENT_SHADER)
-        .vertex_shader(VERTEX_SHADER)
         .initial_indices(&indices)
         .initial_vertices(&vertices);
 

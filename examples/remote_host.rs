@@ -15,9 +15,6 @@ use winit::{
     platform::run_return::EventLoopExtRunReturn,
 };
 
-/// Compile your own damn shaders! LazyVulkan is just as lazy as you are!
-static FRAGMENT_SHADER: &'_ [u8] = include_bytes!("shaders/triangle.frag.spv");
-static VERTEX_SHADER: &'_ [u8] = include_bytes!("shaders/triangle.vert.spv");
 const SWAPCHAIN_FORMAT: vk::Format = vk::Format::R8G8B8A8_UNORM;
 static UNIX_SOCKET_PATH: &'_ str = "lazy_vulkan.socket";
 
@@ -43,8 +40,6 @@ pub fn main() {
     let (mut lazy_vulkan, mut lazy_renderer, mut event_loop) = LazyVulkan::builder()
         .initial_vertices(&vertices)
         .initial_indices(&indices)
-        .fragment_shader(FRAGMENT_SHADER)
-        .vertex_shader(VERTEX_SHADER)
         .with_present(true)
         .build();
 
