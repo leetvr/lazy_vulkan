@@ -14,6 +14,7 @@ bytemuck = "1.13.0"
 glam = "0.22.0"
 log = "0.4.17"
 raw-window-handle = "0.5.0"
+simple-easing = "1.0.1"
 thunderdome = "0.6.0"
 uds_windows = "1.0.2"
 vk-shader-macros = "0.2.8"
@@ -21,3 +22,6 @@ winit = "0.28.1"
 
 [dev-dependencies]
 env_logger = "0.10.0"
+
+[profile.dev.package."*"]
+opt-level = 3
