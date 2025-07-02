@@ -10,9 +10,10 @@ use std::os::unix::net::{UnixListener, UnixStream};
 #[cfg(target_os = "windows")]
 use uds_windows::{UnixListener, UnixStream};
 use winit::{
-    event::{ElementState, Event, KeyboardInput, VirtualKeyCode, WindowEvent},
-    event_loop::ControlFlow,
-    platform::run_return::EventLoopExtRunReturn,
+    application::ApplicationHandler,
+    event::{ElementState, KeyEvent, WindowEvent},
+    event_loop::{ControlFlow, EventLoop},
+    keyboard::{KeyCode, PhysicalKey},
 };
 
 /// Compile your own damn shaders! LazyVulkan is just as lazy as you are!
@@ -21,137 +22,192 @@ static VERTEX_SHADER: &'_ [u8] = include_bytes!("shaders/triangle.vert.spv");
 const SWAPCHAIN_FORMAT: vk::Format = vk::Format::R8G8B8A8_UNORM;
 static UNIX_SOCKET_PATH: &'_ str = "lazy_vulkan.socket";
 
+// Fucking winit
+struct App {
+    lazy_vulkan: Option<LazyVulkan>,
+    lazy_renderer: Option<LazyRenderer>,
+    textures: Vec<VulkanTexture>,
+    semaphores: Vec<vk::Semaphore>,
+    stream: UnixStream,
+    buf: [u8; 1024],
+}
+
+impl App {
+    fn new() -> Self {
+        if std::fs::remove_file(UNIX_SOCKET_PATH).is_ok() {
+            debug!("Removed pre-existing unix socket at {UNIX_SOCKET_PATH}");
+        }
+        // Hello client? Are you there?
+        let listener = UnixListener::bind(UNIX_SOCKET_PATH).unwrap();
+        info!("Listening on {UNIX_SOCKET_PATH} - waiting for client..");
+
+        // Bonjour, monsieur client!
+        let (stream, _) = listener.accept().unwrap();
+        info!("Client connected!");
+        let buf = [0; 1024];
+
+        Self {
+            lazy_vulkan: None,
+            lazy_renderer: None,
+            stream,
+            textures: Default::default(),
+            semaphores: Default::default(),
+            buf,
+        }
+    }
+
+    fn get_render_complete(&mut self) {
+        self.stream.read(&mut self.buf).unwrap();
+    }
+
+    fn send_swapchain_image_index(&mut self, framebuffer_index: u32) {
+        self.stream.read(&mut self.buf).unwrap();
+        self.stream.write(&mut [framebuffer_index as u8]).unwrap();
+    }
+
+    fn send_swapchain_info(&mut self, swapchain_info: &SwapchainInfo) -> std::io::Result<()> {
+        self.stream.read(&mut self.buf)?;
+        let value = self.buf[0];
+        debug!("Read {value}");
+
+        if value == 0 {
+            let write = self.stream.write(bytes_of(swapchain_info)).unwrap();
+            debug!("Write {write} bytes");
+            return Ok(());
+        } else {
+            panic!("Invalid request!");
+        }
+    }
+
+    fn send_image_memory_handles(&mut self, image_memory_handles: &[vk::HANDLE]) {
+        self.stream.read(&mut self.buf).unwrap();
+        let value = self.buf[0];
+        debug!("Read {value}");
+
+        if value == 1 {
+            let write = self
+                .stream
+                .write(bytes_of_slice(image_memory_handles))
+                .unwrap();
+            debug!("Write {write} bytes");
+        } else {
+            panic!("Invalid request!");
+        }
+    }
+
+    fn send_semaphore_handles(&mut self, semaphore_handles: &[vk::HANDLE]) {
+        self.stream.read(&mut self.buf).unwrap();
+        let value = self.buf[0];
+        debug!("Read {value}");
+
+        debug!("Sending handles: {semaphore_handles:?}");
+        let write = self
+            .stream
+            .write(bytes_of_slice(semaphore_handles))
+            .unwrap();
+        debug!("Wrote {write} bytes");
+    }
+}
+
+impl ApplicationHandler for App {
+    fn resumed(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
+        // it's a square (you can call it a quad if you're fancy)
+        let vertices = [
+            Vertex::new([1.0, 1.0, 0.0, 1.0], [1.0, 1.0, 1.0, 0.0], [1.0, 1.0]), // bottom right
+            Vertex::new([-1.0, 1.0, 0.0, 1.0], [1.0, 1.0, 1.0, 0.0], [0.0, 1.0]), // bottom left
+            Vertex::new([1.0, -1.0, 0.0, 1.0], [1.0, 1.0, 1.0, 0.0], [1.0, 0.0]), // top right
+            Vertex::new([-1.0, -1.0, 0.0, 1.0], [1.0, 1.0, 1.0, 0.0], [0.0, 0.0]), // top left
+        ];
+        let indices = [0, 1, 2, 2, 1, 3];
+
+        // Alright, let's build some stuff
+        let (lazy_vulkan, mut lazy_renderer) = LazyVulkan::builder()
+            .initial_vertices(&vertices)
+            .initial_indices(&indices)
+            .fragment_shader(FRAGMENT_SHADER)
+            .vertex_shader(VERTEX_SHADER)
+            .with_present(true)
+            .build(event_loop);
+
+        let swapchain_info = SwapchainInfo {
+            image_count: lazy_vulkan.surface.desired_image_count,
+            resolution: lazy_vulkan.surface.surface_resolution,
+            format: SWAPCHAIN_FORMAT,
+        };
+        let (images, image_memory_handles) =
+            unsafe { create_render_images(lazy_vulkan.context(), &swapchain_info) };
+        let (semaphores, semaphore_handles) =
+            unsafe { create_semaphores(lazy_vulkan.context(), swapchain_info.image_count) };
+        self.textures = create_render_textures(lazy_vulkan.context(), &mut lazy_renderer, images);
+
+        self.send_swapchain_info(&swapchain_info).unwrap();
+        self.send_image_memory_handles(&image_memory_handles);
+        self.send_semaphore_handles(&semaphore_handles);
+
+        self.semaphores = semaphores;
+        self.lazy_renderer = Some(lazy_renderer);
+        self.lazy_vulkan = Some(lazy_vulkan);
+    }
+
+    fn about_to_wait(&mut self, _: &winit::event_loop::ActiveEventLoop) {
+        let framebuffer_index = self.lazy_vulkan.as_ref().unwrap().render_begin();
+        self.send_swapchain_image_index(framebuffer_index);
+        self.get_render_complete();
+
+        let lazy_renderer = self.lazy_renderer.as_mut().unwrap();
+        let lazy_vulkan = self.lazy_vulkan.as_mut().unwrap();
+
+        let texture_id = self.textures[framebuffer_index as usize].id;
+        lazy_renderer.render(
+            lazy_vulkan.context(),
+            framebuffer_index,
+            &[DrawCall::new(0, 6, texture_id, lazy_vulkan::Workflow::Main)],
+        );
+
+        let semaphore = self.semaphores[framebuffer_index as usize];
+        lazy_vulkan.render_end(
+            framebuffer_index,
+            &[semaphore, lazy_vulkan.rendering_complete_semaphore],
+        );
+    }
+
+    fn window_event(
+        &mut self,
+        event_loop: &winit::event_loop::ActiveEventLoop,
+        _: winit::window::WindowId,
+        event: WindowEvent,
+    ) {
+        match event {
+            WindowEvent::CloseRequested
+            | WindowEvent::KeyboardInput {
+                event:
+                    KeyEvent {
+                        state: ElementState::Pressed,
+                        physical_key: PhysicalKey::Code(KeyCode::Escape),
+                        ..
+                    },
+                ..
+            } => event_loop.exit(),
+
+            WindowEvent::Resized(size) => {
+                let lazy_renderer = self.lazy_renderer.as_mut().unwrap();
+                let lazy_vulkan = self.lazy_vulkan.as_mut().unwrap();
+                let new_render_surface = lazy_vulkan.resized(size.width, size.height);
+                lazy_renderer.update_surface(new_render_surface, &lazy_vulkan.context().device);
+            }
+            _ => (),
+        }
+    }
+}
+
 pub fn main() {
     env_logger::builder()
         .filter_level(log::LevelFilter::Info)
         .init();
 
-    // Oh, you thought you could supply your own Vertex type? What is this, a rendergraph?!
-    // Better make sure those shaders use the right layout!
-    // **LAUGHS IN VULKAN**
-    let vertices = [
-        Vertex::new([1.0, 1.0, 0.0, 1.0], [1.0, 1.0, 1.0, 0.0], [1.0, 1.0]), // bottom right
-        Vertex::new([-1.0, 1.0, 0.0, 1.0], [1.0, 1.0, 1.0, 0.0], [0.0, 1.0]), // bottom left
-        Vertex::new([1.0, -1.0, 0.0, 1.0], [1.0, 1.0, 1.0, 0.0], [1.0, 0.0]), // top right
-        Vertex::new([-1.0, -1.0, 0.0, 1.0], [1.0, 1.0, 1.0, 0.0], [0.0, 0.0]), // top left
-    ];
-
-    // Your own index type?! What are you going to use, `u16`?
-    let indices = [0, 1, 2, 2, 1, 3];
-
-    // Alright, let's build some stuff
-    let (mut lazy_vulkan, mut lazy_renderer, mut event_loop) = LazyVulkan::builder()
-        .initial_vertices(&vertices)
-        .initial_indices(&indices)
-        .fragment_shader(FRAGMENT_SHADER)
-        .vertex_shader(VERTEX_SHADER)
-        .with_present(true)
-        .build();
-
-    // Let's do something totally normal and wait for a TCP connection
-    if std::fs::remove_file(UNIX_SOCKET_PATH).is_ok() {
-        debug!("Removed pre-existing unix socket at {UNIX_SOCKET_PATH}");
-    }
-    let listener = UnixListener::bind(UNIX_SOCKET_PATH).unwrap();
-    info!("Listening on {UNIX_SOCKET_PATH} - waiting for client..");
-    let swapchain_info = SwapchainInfo {
-        image_count: lazy_vulkan.surface.desired_image_count,
-        resolution: lazy_vulkan.surface.surface_resolution,
-        format: SWAPCHAIN_FORMAT,
-    };
-    let (images, image_memory_handles) =
-        unsafe { create_render_images(lazy_vulkan.context(), &swapchain_info) };
-    let (semaphores, semaphore_handles) =
-        unsafe { create_semaphores(lazy_vulkan.context(), swapchain_info.image_count) };
-    let textures = create_render_textures(lazy_vulkan.context(), &mut lazy_renderer, images);
-    let (mut stream, _) = listener.accept().unwrap();
-    info!("Client connected!");
-    let mut buf: [u8; 1024] = [0; 1024];
-    send_swapchain_info(&mut stream, &swapchain_info, &mut buf).unwrap();
-    send_image_memory_handles(&mut stream, image_memory_handles, &mut buf).unwrap();
-    send_semaphore_handles(&mut stream, semaphore_handles, &mut buf);
-
-    // Off we go!
-    let mut winit_initializing = true;
-    event_loop.run_return(|event, _, control_flow| {
-        *control_flow = ControlFlow::Poll;
-        match event {
-            Event::WindowEvent {
-                event:
-                    WindowEvent::CloseRequested
-                    | WindowEvent::KeyboardInput {
-                        input:
-                            KeyboardInput {
-                                state: ElementState::Pressed,
-                                virtual_keycode: Some(VirtualKeyCode::Escape),
-                                ..
-                            },
-                        ..
-                    },
-                ..
-            } => *control_flow = ControlFlow::Exit,
-
-            Event::NewEvents(cause) => {
-                if cause == winit::event::StartCause::Init {
-                    winit_initializing = true;
-                } else {
-                    winit_initializing = false;
-                }
-            }
-
-            Event::MainEventsCleared => {
-                let framebuffer_index = lazy_vulkan.render_begin();
-                send_swapchain_image_index(&mut stream, &mut buf, framebuffer_index);
-                get_render_complete(&mut stream, &mut buf);
-                let texture_id = textures[framebuffer_index as usize].id;
-                lazy_renderer.render(
-                    lazy_vulkan.context(),
-                    framebuffer_index,
-                    &[DrawCall::new(
-                        0,
-                        indices.len() as _,
-                        texture_id,
-                        lazy_vulkan::Workflow::Main,
-                    )],
-                );
-
-                let semaphore = semaphores[framebuffer_index as usize];
-                lazy_vulkan.render_end(
-                    framebuffer_index,
-                    &[semaphore, lazy_vulkan.rendering_complete_semaphore],
-                );
-            }
-            Event::WindowEvent {
-                event: WindowEvent::Resized(size),
-                ..
-            } => {
-                if !winit_initializing {
-                    let new_render_surface = lazy_vulkan.resized(size.width, size.height);
-                    lazy_renderer.update_surface(new_render_surface, &lazy_vulkan.context().device);
-                }
-            }
-            _ => (),
-        }
-    });
-
-    // I guess we better do this or else the Dreaded Validation Layers will complain
-    unsafe {
-        lazy_renderer.cleanup(&lazy_vulkan.context().device);
-    }
-}
-
-fn send_semaphore_handles(
-    stream: &mut UnixStream,
-    semaphore_handles: Vec<*mut std::ffi::c_void>,
-    buf: &mut [u8; 1024],
-) {
-    stream.read(buf).unwrap();
-    let value = buf[0];
-    debug!("Read {value}");
-
-    debug!("Sending handles: {semaphore_handles:?}");
-    let write = stream.write(bytes_of_slice(&semaphore_handles)).unwrap();
-    debug!("Wrote {write} bytes");
+    let event_loop = EventLoop::builder().build().unwrap();
+    event_loop.set_control_flow(ControlFlow::Poll);
+    event_loop.run_app(&mut App::new()).unwrap();
 }
 
 unsafe fn create_semaphores(
@@ -160,22 +216,23 @@ unsafe fn create_semaphores(
 ) -> (Vec<vk::Semaphore>, Vec<vk::HANDLE>) {
     let device = &context.device;
     let external_semaphore =
-        ash::extensions::khr::ExternalSemaphoreWin32::new(&context.instance, &context.device);
+        ash::khr::external_semaphore_win32::Device::new(&context.instance, &context.device);
+
     let handle_type = vk::ExternalSemaphoreHandleTypeFlags::OPAQUE_WIN32_KMT;
     (0..image_count)
         .map(|_| {
             let mut external_semaphore_info =
-                vk::ExportSemaphoreCreateInfo::builder().handle_types(handle_type);
+                vk::ExportSemaphoreCreateInfo::default().handle_types(handle_type);
             let semaphore = device
                 .create_semaphore(
-                    &vk::SemaphoreCreateInfo::builder().push_next(&mut external_semaphore_info),
+                    &vk::SemaphoreCreateInfo::default().push_next(&mut external_semaphore_info),
                     None,
                 )
                 .unwrap();
 
             let handle = external_semaphore
                 .get_semaphore_win32_handle(
-                    &vk::SemaphoreGetWin32HandleInfoKHR::builder()
+                    &vk::SemaphoreGetWin32HandleInfoKHR::default()
                         .handle_type(handle_type)
                         .semaphore(semaphore),
                 )
@@ -202,7 +259,7 @@ fn create_render_textures(
                 vulkan_context
                     .device
                     .create_sampler(
-                        &vk::SamplerCreateInfo::builder()
+                        &vk::SamplerCreateInfo::default()
                             .address_mode_u(address_mode)
                             .address_mode_v(address_mode)
                             .address_mode_w(address_mode)
@@ -227,19 +284,6 @@ fn create_render_textures(
         .collect()
 }
 
-fn get_render_complete(stream: &mut UnixStream, buf: &mut [u8]) {
-    stream.read(buf).unwrap();
-}
-
-fn send_swapchain_image_index(
-    stream: &mut UnixStream,
-    buf: &mut [u8; 1024],
-    framebuffer_index: u32,
-) {
-    stream.read(buf).unwrap();
-    stream.write(&mut [framebuffer_index as u8]).unwrap();
-}
-
 unsafe fn create_render_images(
     context: &lazy_vulkan::vulkan_context::VulkanContext,
     swapchain_info: &SwapchainInfo,
@@ -255,7 +299,7 @@ unsafe fn create_render_images(
     (0..(*image_count))
         .map(|_| {
             let mut handle_info =
-                vk::ExternalMemoryImageCreateInfo::builder().handle_types(handle_type);
+                vk::ExternalMemoryImageCreateInfo::default().handle_types(handle_type);
             let image = device
                 .create_image(
                     &vk::ImageCreateInfo {
@@ -283,11 +327,11 @@ unsafe fn create_render_images(
             )
             .expect("Unable to find suitable memory type for image");
             let mut export_handle_info =
-                vk::ExportMemoryAllocateInfo::builder().handle_types(handle_type);
+                vk::ExportMemoryAllocateInfo::default().handle_types(handle_type);
             let memory = context
                 .device
                 .allocate_memory(
-                    &vk::MemoryAllocateInfo::builder()
+                    &vk::MemoryAllocateInfo::default()
                         .allocation_size(memory_requirements.size)
                         .memory_type_index(memory_index)
                         .push_next(&mut export_handle_info),
@@ -298,10 +342,10 @@ unsafe fn create_render_images(
             device.bind_image_memory(image, memory, 0).unwrap();
 
             let external_memory =
-                ash::extensions::khr::ExternalMemoryWin32::new(&context.instance, &context.device);
+                ash::khr::external_memory_win32::Device::new(&context.instance, &context.device);
             let handle = external_memory
                 .get_memory_win32_handle(
-                    &vk::MemoryGetWin32HandleInfoKHR::builder()
+                    &vk::MemoryGetWin32HandleInfoKHR::default()
                         .handle_type(handle_type)
                         .memory(memory),
                 )
@@ -311,43 +355,6 @@ unsafe fn create_render_images(
             (image, handle)
         })
         .unzip()
-}
-
-fn send_swapchain_info(
-    stream: &mut UnixStream,
-    swapchain_info: &SwapchainInfo,
-    buf: &mut [u8],
-) -> std::io::Result<()> {
-    stream.read(buf)?;
-    let value = buf[0];
-    debug!("Read {value}");
-
-    if value == 0 {
-        let write = stream.write(bytes_of(swapchain_info)).unwrap();
-        debug!("Write {write} bytes");
-        return Ok(());
-    } else {
-        panic!("Invalid request!");
-    }
-}
-
-fn send_image_memory_handles(
-    stream: &mut UnixStream,
-    handles: Vec<vk::HANDLE>,
-    buf: &mut [u8],
-) -> std::io::Result<()> {
-    stream.read(buf)?;
-    let value = buf[0];
-    debug!("Read {value}");
-
-    if value == 1 {
-        debug!("Sending handles: {handles:?}");
-        let write = stream.write(bytes_of_slice(&handles)).unwrap();
-        debug!("Write {write} bytes");
-        return Ok(());
-    } else {
-        panic!("Invalid request!");
-    }
 }
 
 fn bytes_of_slice<T>(t: &[T]) -> &[u8] {

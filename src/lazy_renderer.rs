@@ -165,11 +165,11 @@ impl LazyRenderer {
             ..Default::default()
         }];
 
-        let subpass = vk::SubpassDescription::builder()
+        let subpass = vk::SubpassDescription::default()
             .color_attachments(&color_attachment_refs)
             .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS);
 
-        let renderpass_create_info = vk::RenderPassCreateInfo::builder()
+        let renderpass_create_info = vk::RenderPassCreateInfo::default()
             .attachments(&renderpass_attachments)
             .subpasses(std::slice::from_ref(&subpass))
             .dependencies(&dependencies);
@@ -198,11 +198,11 @@ impl LazyRenderer {
 
         let vertex_code =
             read_spv(&mut vertex_spv_file).expect("Failed to read vertex shader spv file");
-        let vertex_shader_info = vk::ShaderModuleCreateInfo::builder().code(&vertex_code);
+        let vertex_shader_info = vk::ShaderModuleCreateInfo::default().code(&vertex_code);
 
         let frag_code =
             read_spv(&mut frag_spv_file).expect("Failed to read fragment shader spv file");
-        let frag_shader_info = vk::ShaderModuleCreateInfo::builder().code(&frag_code);
+        let frag_shader_info = vk::ShaderModuleCreateInfo::default().code(&frag_code);
 
         let vertex_shader_module = unsafe {
             device
@@ -219,9 +219,9 @@ impl LazyRenderer {
         let pipeline_layout = unsafe {
             device
                 .create_pipeline_layout(
-                    &vk::PipelineLayoutCreateInfo::builder()
+                    &vk::PipelineLayoutCreateInfo::default()
                         .push_constant_ranges(std::slice::from_ref(
-                            &vk::PushConstantRange::builder()
+                            &vk::PushConstantRange::default()
                                 .stage_flags(vk::ShaderStageFlags::FRAGMENT)
                                 .size(std::mem::size_of::<PushConstant>() as _),
                         ))
@@ -277,7 +277,7 @@ impl LazyRenderer {
             },
         ];
 
-        let vertex_input_state_info = vk::PipelineVertexInputStateCreateInfo::builder()
+        let vertex_input_state_info = vk::PipelineVertexInputStateCreateInfo::default()
             .vertex_attribute_descriptions(&vertex_input_attribute_descriptions)
             .vertex_binding_descriptions(&vertex_input_binding_descriptions);
         let vertex_input_assembly_state_info = vk::PipelineInputAssemblyStateCreateInfo {
@@ -293,7 +293,7 @@ impl LazyRenderer {
             max_depth: 1.0,
         }];
         let scissors = [render_surface.resolution.into()];
-        let viewport_state_info = vk::PipelineViewportStateCreateInfo::builder()
+        let viewport_state_info = vk::PipelineViewportStateCreateInfo::default()
             .scissors(&scissors)
             .viewports(&viewports);
 
@@ -333,32 +333,30 @@ impl LazyRenderer {
             alpha_blend_op: vk::BlendOp::ADD,
             color_write_mask: vk::ColorComponentFlags::RGBA,
         }];
-        let color_blend_state = vk::PipelineColorBlendStateCreateInfo::builder()
+        let color_blend_state = vk::PipelineColorBlendStateCreateInfo::default()
             .logic_op(vk::LogicOp::CLEAR)
             .attachments(&color_blend_attachment_states);
 
         let dynamic_state = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
         let dynamic_state_info =
-            vk::PipelineDynamicStateCreateInfo::builder().dynamic_states(&dynamic_state);
-
-        let graphic_pipeline_info = vk::GraphicsPipelineCreateInfo::builder()
-            .stages(&shader_stage_create_infos)
-            .vertex_input_state(&vertex_input_state_info)
-            .input_assembly_state(&vertex_input_assembly_state_info)
-            .viewport_state(&viewport_state_info)
-            .rasterization_state(&rasterization_info)
-            .multisample_state(&multisample_state_info)
-            .depth_stencil_state(&depth_state_info)
-            .color_blend_state(&color_blend_state)
-            .dynamic_state(&dynamic_state_info)
-            .layout(pipeline_layout)
-            .render_pass(render_pass);
+            vk::PipelineDynamicStateCreateInfo::default().dynamic_states(&dynamic_state);
 
         let graphics_pipelines = unsafe {
             device
                 .create_graphics_pipelines(
                     vk::PipelineCache::null(),
-                    &[graphic_pipeline_info.build()],
+                    &[vk::GraphicsPipelineCreateInfo::default()
+                        .stages(&shader_stage_create_infos)
+                        .vertex_input_state(&vertex_input_state_info)
+                        .input_assembly_state(&vertex_input_assembly_state_info)
+                        .viewport_state(&viewport_state_info)
+                        .rasterization_state(&rasterization_info)
+                        .multisample_state(&multisample_state_info)
+                        .depth_stencil_state(&depth_state_info)
+                        .color_blend_state(&color_blend_state)
+                        .dynamic_state(&dynamic_state_info)
+                        .layout(pipeline_layout)
+                        .render_pass(render_pass)],
                     None,
                 )
                 .expect("Unable to create graphics pipeline")
@@ -410,7 +408,7 @@ impl LazyRenderer {
 
         let surface = &self.render_surface;
 
-        let render_pass_begin_info = vk::RenderPassBeginInfo::builder()
+        let render_pass_begin_info = vk::RenderPassBeginInfo::default()
             .render_pass(self.render_pass)
             .framebuffer(self.framebuffers[framebuffer_index as usize])
             .render_area(surface.resolution.into())
@@ -551,7 +549,7 @@ fn create_framebuffers(
         .iter()
         .map(|&present_image_view| {
             let framebuffer_attachments = [present_image_view];
-            let frame_buffer_create_info = vk::FramebufferCreateInfo::builder()
+            let frame_buffer_create_info = vk::FramebufferCreateInfo::default()
                 .render_pass(render_pass)
                 .attachments(&framebuffer_attachments)
                 .width(render_surface.resolution.width)

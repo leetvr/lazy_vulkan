@@ -3,6 +3,7 @@ use lazy_vulkan::{
     create_swapchain_image_views, DrawCall, SwapchainInfo, Vertex, Workflow, NO_TEXTURE_ID,
 };
 use std::io::{Read, Write};
+
 #[cfg(not(target_os = "windows"))]
 use std::os::unix::net::UnixStream;
 use std::sync::Mutex;
@@ -112,7 +113,12 @@ pub fn main() -> std::io::Result<()> {
 
                 if let Some(new_color) = new_color {
                     info!("[CLIENT] Triangle is now {new_color:?}");
-                    unsafe { *COLOUR.get_mut().unwrap() = new_color }
+
+                    // NOTE: There are *zero* fucks given here.
+                    #[allow(static_mut_refs)]
+                    unsafe {
+                        *COLOUR.get_mut().unwrap() = new_color
+                    }
                 }
 
                 buffer.clear();
@@ -144,7 +150,7 @@ fn fake_submit(vulkan_context: &VulkanContext, semaphore: vk::Semaphore) {
             .queue_submit(
                 vulkan_context.queue,
                 std::slice::from_ref(
-                    &vk::SubmitInfo::builder().signal_semaphores(std::slice::from_ref(&semaphore)),
+                    &vk::SubmitInfo::default().signal_semaphores(std::slice::from_ref(&semaphore)),
                 ),
                 vk::Fence::null(),
             )
@@ -165,7 +171,7 @@ fn get_semaphores(
     let handles: &[vk::HANDLE] =
         unsafe { std::slice::from_raw_parts(buf.as_ptr().cast(), image_count as _) };
     debug!("Got handle {handles:?}");
-    let external_semaphore = ash::extensions::khr::ExternalSemaphoreWin32::new(
+    let external_semaphore = ash::khr::external_semaphore_win32::Device::new(
         &vulkan_context.instance,
         &vulkan_context.device,
     );
@@ -175,17 +181,17 @@ fn get_semaphores(
         .iter()
         .map(|h| unsafe {
             let mut external_semaphore_info =
-                vk::ExportSemaphoreCreateInfo::builder().handle_types(handle_type);
+                vk::ExportSemaphoreCreateInfo::default().handle_types(handle_type);
             let semaphore = device
                 .create_semaphore(
-                    &vk::SemaphoreCreateInfo::builder().push_next(&mut external_semaphore_info),
+                    &vk::SemaphoreCreateInfo::default().push_next(&mut external_semaphore_info),
                     None,
                 )
                 .unwrap();
 
             external_semaphore
                 .import_semaphore_win32_handle(
-                    &vk::ImportSemaphoreWin32HandleInfoKHR::builder()
+                    &vk::ImportSemaphoreWin32HandleInfoKHR::default()
                         .handle(*h)
                         .semaphore(semaphore)
                         .handle_type(handle_type),
@@ -202,6 +208,7 @@ fn update_colour(
     vulkan_context: &VulkanContext,
     renderer: &mut lazy_vulkan::LazyRenderer,
 ) {
+    #[allow(static_mut_refs)]
     if let Ok(colour) = unsafe { COLOUR.get_mut() } {
         for v in vertices.iter_mut() {
             v.colour = colour.to_rgba().into()
@@ -221,7 +228,7 @@ fn create_command_buffers(
         vulkan_context
             .device
             .allocate_command_buffers(
-                &vk::CommandBufferAllocateInfo::builder()
+                &vk::CommandBufferAllocateInfo::default()
                     .command_pool(vulkan_context.command_pool)
                     .command_buffer_count(image_count),
             )
@@ -235,7 +242,7 @@ fn create_fences(vulkan_context: &VulkanContext, image_count: u32) -> Vec<vk::Fe
             vulkan_context
                 .device
                 .create_fence(
-                    &vk::FenceCreateInfo::builder().flags(vk::FenceCreateFlags::SIGNALED),
+                    &vk::FenceCreateInfo::default().flags(vk::FenceCreateFlags::SIGNALED),
                     None,
                 )
                 .unwrap()
@@ -251,9 +258,10 @@ fn end_frame(vulkan_context: &VulkanContext, fence: vk::Fence, command_buffer: v
         device
             .queue_submit(
                 vulkan_context.queue,
-                &[vk::SubmitInfo::builder()
-                    .command_buffers(std::slice::from_ref(&command_buffer))
-                    .build()],
+                &[
+                    vk::SubmitInfo::default()
+                        .command_buffers(std::slice::from_ref(&command_buffer)),
+                ],
                 fence,
             )
             .unwrap();
@@ -280,7 +288,7 @@ fn begin_frame(
         device
             .begin_command_buffer(
                 command_buffer,
-                &vk::CommandBufferBeginInfo::builder()
+                &vk::CommandBufferBeginInfo::default()
                     .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT),
             )
             .unwrap();
@@ -317,7 +325,7 @@ fn get_swapchain_images(
             let handle_type = vk::ExternalMemoryHandleTypeFlags::OPAQUE_WIN32_KMT;
 
             let mut external_memory_image_create_info =
-                vk::ExternalMemoryImageCreateInfo::builder().handle_types(handle_type);
+                vk::ExternalMemoryImageCreateInfo::default().handle_types(handle_type);
             let image = device
                 .create_image(
                     &vk::ImageCreateInfo {
@@ -337,13 +345,13 @@ fn get_swapchain_images(
                 )
                 .unwrap();
             let requirements = device.get_image_memory_requirements(image);
-            let mut external_memory_allocate_info = vk::ImportMemoryWin32HandleInfoKHR::builder()
+            let mut external_memory_allocate_info = vk::ImportMemoryWin32HandleInfoKHR::default()
                 .handle(*handle)
                 .handle_type(handle_type);
             let memory = vulkan
                 .device
                 .allocate_memory(
-                    &vk::MemoryAllocateInfo::builder()
+                    &vk::MemoryAllocateInfo::default()
                         .allocation_size(requirements.size)
                         .push_next(&mut external_memory_allocate_info),
                     None,

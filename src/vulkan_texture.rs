@@ -66,7 +66,7 @@ impl VulkanTexture {
             vulkan_context
                 .device
                 .create_sampler(
-                    &vk::SamplerCreateInfo::builder()
+                    &vk::SamplerCreateInfo::default()
                         .address_mode_u(address_mode)
                         .address_mode_v(address_mode)
                         .address_mode_w(address_mode)

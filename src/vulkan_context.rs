@@ -1,5 +1,6 @@
 use ash::vk;
 use log::info;
+use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use winit::window::Window;
 
 use crate::{buffer::Buffer, find_memorytype_index, Surface};
@@ -91,32 +92,26 @@ impl VulkanContext {
     }
 
     pub fn new_with_surface(window: &Window, window_resolution: vk::Extent2D) -> (Self, Surface) {
-        use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
+        let display_handle = window.display_handle().unwrap().as_raw();
+        let window_handle = window.window_handle().unwrap().as_raw();
 
-        let mut extension_names =
-            ash_window::enumerate_required_extensions(window.raw_display_handle())
-                .unwrap()
-                .to_vec();
+        let mut extension_names = ash_window::enumerate_required_extensions(display_handle)
+            .unwrap()
+            .to_vec();
 
         let (entry, instance) = init(&mut extension_names);
 
-        let surface_loader = ash::extensions::khr::Surface::new(&entry, &instance);
+        let surface_loader = ash::khr::surface::Instance::new(&entry, &instance);
 
         let surface = unsafe {
-            ash_window::create_surface(
-                &entry,
-                &instance,
-                window.raw_display_handle(),
-                window.raw_window_handle(),
-                None,
-            )
-            .unwrap()
+            ash_window::create_surface(&entry, &instance, display_handle, window_handle, None)
+                .unwrap()
         };
 
         let (physical_device, queue_family_index) =
             get_physical_device(&instance, Some(&surface_loader), Some(&surface));
 
-        let mut device_extension_names_raw = vec![ash::extensions::khr::Swapchain::name().as_ptr()];
+        let mut device_extension_names_raw = vec![ash::khr::swapchain::NAME.as_ptr()];
 
         let device = create_device(
             queue_family_index,
@@ -321,7 +316,7 @@ impl VulkanContext {
         device.end_command_buffer(command_buffer).unwrap();
 
         let submit_info =
-            vk::SubmitInfo::builder().command_buffers(std::slice::from_ref(&command_buffer));
+            vk::SubmitInfo::default().command_buffers(std::slice::from_ref(&command_buffer));
         device
             .queue_submit(self.queue, std::slice::from_ref(&submit_info), fence)
             .unwrap();
@@ -375,12 +370,12 @@ pub fn create_command_pool(
     queue_family_index: u32,
     device: &ash::Device,
 ) -> (vk::CommandPool, vk::CommandBuffer) {
-    let pool_create_info = vk::CommandPoolCreateInfo::builder()
+    let pool_create_info = vk::CommandPoolCreateInfo::default()
         .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER)
         .queue_family_index(queue_family_index);
     let pool = unsafe { device.create_command_pool(&pool_create_info, None).unwrap() };
 
-    let command_buffer_allocate_info = vk::CommandBufferAllocateInfo::builder()
+    let command_buffer_allocate_info = vk::CommandBufferAllocateInfo::default()
         .command_buffer_count(1)
         .command_pool(pool)
         .level(vk::CommandBufferLevel::PRIMARY);
@@ -410,14 +405,14 @@ pub fn create_device(
     extension_names.push(ash::extensions::khr::ExternalSemaphoreWin32::name().as_ptr());
 
     let priorities = [1.0];
-    let queue_info = vk::DeviceQueueCreateInfo::builder()
+    let queue_info = vk::DeviceQueueCreateInfo::default()
         .queue_family_index(queue_family_index)
         .queue_priorities(&priorities);
 
-    let mut descriptor_indexing_features = vk::PhysicalDeviceDescriptorIndexingFeatures::builder()
+    let mut descriptor_indexing_features = vk::PhysicalDeviceDescriptorIndexingFeatures::default()
         .descriptor_binding_partially_bound(true);
 
-    let device_create_info = vk::DeviceCreateInfo::builder()
+    let device_create_info = vk::DeviceCreateInfo::default()
         .queue_create_infos(std::slice::from_ref(&queue_info))
         .enabled_extension_names(extension_names)
         .push_next(&mut descriptor_indexing_features);
@@ -431,7 +426,7 @@ pub fn create_device(
 
 pub fn get_physical_device(
     instance: &ash::Instance,
-    surface_loader: Option<&ash::extensions::khr::Surface>,
+    surface_loader: Option<&ash::khr::surface::Instance>,
     surface: Option<&vk::SurfaceKHR>,
 ) -> (vk::PhysicalDevice, u32) {
     let pdevices = unsafe {
@@ -496,7 +491,7 @@ pub fn init(extension_names: &mut Vec<*const std::ffi::c_char>) -> (ash::Entry, 
     let entry = ash::Entry::linked();
     let app_name = unsafe { std::ffi::CStr::from_bytes_with_nul_unchecked(b"Lazy Vulkan\0") };
 
-    let appinfo = vk::ApplicationInfo::builder()
+    let appinfo = vk::ApplicationInfo::default()
         .application_name(app_name)
         .application_version(0)
         .engine_name(app_name)
@@ -521,7 +516,7 @@ pub fn init(extension_names: &mut Vec<*const std::ffi::c_char>) -> (ash::Entry, 
         .join(", ");
     info!("Using extensions {extensions_list}");
 
-    let create_info = vk::InstanceCreateInfo::builder()
+    let create_info = vk::InstanceCreateInfo::default()
         .application_info(&appinfo)
         .flags(create_flags)
         .enabled_extension_names(extension_names);
