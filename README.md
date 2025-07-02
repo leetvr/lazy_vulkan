@@ -38,9 +38,9 @@ pub fn main() {
   let indices = [0, 1, 2];
 
   // Alright, let's get on with it.
-  // 
+  //
   // You want a different window size? Just resize it!
-  let (mut lazy_vulkan, mut lazy_renderer, mut event_loop) = LazyVulkan::builder()
+  let (mut lazy_vulkan, mut lazy_renderer, mut event_loop) = LazyVulkan::default()
       .initial_vertices(&vertices)
       .initial_indices(&indices)
       .fragment_shader(FRAGMENT_SHADER)
@@ -84,7 +84,7 @@ extremely trivial process in the following places:
 - [Remote Host](examples/remote_host.rs)
 - [Remote Client](examples/remote_client.rs)
 
-Please note that these will only run on the Microsoft Windows(TM) operating system. 
+Please note that these will only run on the Microsoft Windows(TM) operating system.
 
 ## NOTE
 This repository is a joke and its contents should never, ever be used as the basis for a AAA rendering engine.

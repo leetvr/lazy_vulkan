@@ -8,15 +8,15 @@ version = "0.1.0"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-ash = {features = ["linked"], version = "0.37.2"}
-ash-window = "0.12.0"
+ash = { features = ["linked"], version = "0.38.0" }
+ash-window = "0.13.0"
 bytemuck = "1.13.0"
 glam = "0.22.0"
 log = "0.4.17"
-raw-window-handle = "0.5.0"
+raw-window-handle = "0.6.2"
 thunderdome = "0.6.0"
 uds_windows = "1.0.2"
-winit = "0.28.1"
+winit = "0.30.11"
 
 [dev-dependencies]
 env_logger = "0.10.0"

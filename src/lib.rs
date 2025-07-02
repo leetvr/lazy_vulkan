@@ -7,7 +7,10 @@ pub mod vulkan_texture;
 use ash::vk;
 use glam::{Vec2, Vec4};
 pub use lazy_renderer::{DrawCall, LazyRenderer, Workflow};
-use winit::{event_loop::EventLoop, window::Window};
+use winit::{
+    event_loop::ActiveEventLoop,
+    window::{Window, WindowAttributes},
+};
 
 pub use crate::vulkan_texture::NO_TEXTURE_ID;
 use crate::{lazy_renderer::RenderSurface, vulkan_context::VulkanContext};
@@ -93,17 +96,30 @@ impl LazyVulkanBuilder {
         self
     }
 
-    pub fn build(self) -> (LazyVulkan, LazyRenderer, EventLoop<()>) {
+    pub fn build(self, active_event_loop: &ActiveEventLoop) -> (LazyVulkan, LazyRenderer) {
         let window_resolution = self.window_size.unwrap_or(vk::Extent2D {
             width: 500,
             height: 500,
         });
-        let (event_loop, window) = init_winit(window_resolution.width, window_resolution.height);
+
+        let window_width = window_resolution.width;
+        let window_height = window_resolution.height;
+
+        let window = active_event_loop
+            .create_window(
+                WindowAttributes::default()
+                    .with_title("Lazy Vulkan")
+                    .with_inner_size(winit::dpi::LogicalSize::new(
+                        f64::from(window_width),
+                        f64::from(window_height),
+                    )),
+            )
+            .unwrap();
 
         let (vulkan, render_surface) = LazyVulkan::new(window, window_resolution);
         let renderer = LazyRenderer::new(vulkan.context(), render_surface, &self);
 
-        (vulkan, renderer, event_loop)
+        (vulkan, renderer)
     }
 }
 
@@ -113,7 +129,7 @@ pub struct LazyVulkan {
     pub surface: Surface,
     pub swapchain: vk::SwapchainKHR,
     pub swapchain_images: Vec<vk::Image>,
-    pub swapchain_loader: ash::extensions::khr::Swapchain,
+    pub swapchain_loader: ash::khr::swapchain::Device,
 
     pub present_complete_semaphore: vk::Semaphore,
     pub rendering_complete_semaphore: vk::Semaphore,
@@ -124,7 +140,7 @@ pub struct LazyVulkan {
 
 pub struct Surface {
     pub surface: vk::SurfaceKHR,
-    pub surface_loader: ash::extensions::khr::Surface,
+    pub surface_loader: ash::khr::surface::Instance,
     pub surface_format: vk::SurfaceFormatKHR,
     pub surface_resolution: vk::Extent2D,
     pub present_mode: vk::PresentModeKHR,
@@ -146,12 +162,12 @@ impl LazyVulkan {
         let (context, surface) = VulkanContext::new_with_surface(&window, window_resolution);
         let device = &context.device;
         let instance = &context.instance;
-        let swapchain_loader = ash::extensions::khr::Swapchain::new(instance, device);
+        let swapchain_loader = ash::khr::swapchain::Device::new(instance, device);
         let (swapchain, swapchain_images, swapchain_image_views) =
             create_swapchain(&context, &surface, &swapchain_loader, None);
 
         let fence_create_info =
-            vk::FenceCreateInfo::builder().flags(vk::FenceCreateFlags::SIGNALED);
+            vk::FenceCreateInfo::default().flags(vk::FenceCreateFlags::SIGNALED);
 
         let draw_commands_reuse_fence = unsafe {
             device
@@ -201,7 +217,7 @@ impl LazyVulkan {
     }
 
     pub fn resized(&mut self, window_width: u32, window_height: u32) -> RenderSurface {
-        println!("Vulkan Resized: {window_width}, {window_height}");
+        log::trace!("Vulkan Resized: {window_width}, {window_height}");
         unsafe {
             let device = &self.context.device;
             device.device_wait_idle().unwrap();
@@ -219,7 +235,7 @@ impl LazyVulkan {
             self.destroy_swapchain(self.swapchain);
             self.swapchain = new_swapchain;
 
-            println!("OK! Swapchain recreated");
+            log::trace!("OK! Swapchain recreated");
 
             RenderSurface {
                 resolution: self.surface.surface_resolution,
@@ -266,7 +282,7 @@ impl LazyVulkan {
             device
                 .begin_command_buffer(
                     self.context.draw_command_buffer,
-                    &vk::CommandBufferBeginInfo::builder()
+                    &vk::CommandBufferBeginInfo::default()
                         .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT),
                 )
                 .unwrap();
@@ -282,7 +298,7 @@ impl LazyVulkan {
                 .unwrap();
             let swapchains = [self.swapchain];
             let image_indices = [present_index];
-            let submit_info = vk::SubmitInfo::builder()
+            let submit_info = vk::SubmitInfo::default()
                 .wait_semaphores(wait_semaphores)
                 .wait_dst_stage_mask(&[vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT])
                 .command_buffers(std::slice::from_ref(&self.context.draw_command_buffer))
@@ -298,13 +314,13 @@ impl LazyVulkan {
 
             match self.swapchain_loader.queue_present(
                 self.context.queue,
-                &vk::PresentInfoKHR::builder()
+                &vk::PresentInfoKHR::default()
                     .image_indices(&image_indices)
                     .wait_semaphores(std::slice::from_ref(&self.rendering_complete_semaphore))
                     .swapchains(&swapchains),
             ) {
                 Ok(true) | Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
-                    println!("Swapchain is suboptimal!")
+                    log::trace!("Swapchain is suboptimal!")
                 }
                 Err(e) => panic!("Error presenting: {e:?}"),
                 _ => {}
@@ -313,34 +329,15 @@ impl LazyVulkan {
     }
 }
 
-pub(crate) fn init_winit(
-    window_width: u32,
-    window_height: u32,
-) -> (winit::event_loop::EventLoop<()>, winit::window::Window) {
-    use winit::{event_loop::EventLoopBuilder, window::WindowBuilder};
-
-    let event_loop = EventLoopBuilder::new().build();
-
-    let window = WindowBuilder::new()
-        .with_title("Lazy Vulkan")
-        .with_inner_size(winit::dpi::LogicalSize::new(
-            f64::from(window_width),
-            f64::from(window_height),
-        ))
-        .build(&event_loop)
-        .unwrap();
-    (event_loop, window)
-}
-
 fn create_swapchain(
     context: &VulkanContext,
     surface: &Surface,
-    swapchain_loader: &ash::extensions::khr::Swapchain,
+    swapchain_loader: &ash::khr::swapchain::Device,
     previous_swapchain: Option<vk::SwapchainKHR>,
 ) -> (vk::SwapchainKHR, Vec<vk::Image>, Vec<vk::ImageView>) {
     let device = &context.device;
 
-    let mut swapchain_create_info = vk::SwapchainCreateInfoKHR::builder()
+    let mut swapchain_create_info = vk::SwapchainCreateInfoKHR::default()
         .surface(surface.surface)
         .min_image_count(surface.desired_image_count)
         .image_color_space(surface.surface_format.color_space)
@@ -379,7 +376,7 @@ pub fn create_swapchain_image_views(
     present_images
         .iter()
         .map(|&image| {
-            let create_view_info = vk::ImageViewCreateInfo::builder()
+            let create_view_info = vk::ImageViewCreateInfo::default()
                 .view_type(vk::ImageViewType::TYPE_2D)
                 .format(surface_format)
                 .components(vk::ComponentMapping {

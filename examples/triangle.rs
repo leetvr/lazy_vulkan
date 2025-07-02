@@ -1,91 +1,92 @@
-use lazy_vulkan::{DrawCall, LazyVulkan, Vertex, Workflow, NO_TEXTURE_ID};
+use lazy_vulkan::{DrawCall, LazyRenderer, LazyVulkan, Vertex, Workflow, NO_TEXTURE_ID};
 use winit::{
-    event::{ElementState, Event, KeyboardInput, VirtualKeyCode, WindowEvent},
-    event_loop::ControlFlow,
-    platform::run_return::EventLoopExtRunReturn,
+    application::ApplicationHandler,
+    event::{ElementState, KeyEvent, WindowEvent},
+    event_loop::{ControlFlow, EventLoop},
+    keyboard::{KeyCode, PhysicalKey},
 };
 /// Compile your own damn shaders! LazyVulkan is just as lazy as you are!
 static FRAGMENT_SHADER: &'static [u8] = include_bytes!("shaders/triangle.frag.spv");
 static VERTEX_SHADER: &'static [u8] = include_bytes!("shaders/triangle.vert.spv");
 
-pub fn main() {
-    env_logger::init();
+// Fucking winit
+#[derive(Default)]
+struct App {
+    lazy_vulkan: Option<LazyVulkan>,
+    lazy_renderer: Option<LazyRenderer>,
+}
 
-    // Oh, you thought you could supply your own Vertex type? What is this, a rendergraph?!
-    // Better make sure those shaders use the right layout!
-    // **LAUGHS IN VULKAN**
-    let vertices = [
-        Vertex::new([1.0, 1.0, 0.0, 1.0], [1.0, 0.0, 0.0, 0.0], [0.0, 0.0]),
-        Vertex::new([-1.0, 1.0, 0.0, 1.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0]),
-        Vertex::new([0.0, -1.0, 0.0, 1.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0]),
-    ];
+impl ApplicationHandler for App {
+    fn resumed(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
+        // Oh, you thought you could supply your own Vertex type? What is this, a rendergraph?!
+        // Better make sure those shaders use the right layout!
+        // **LAUGHS IN VULKAN**
+        let vertices = [
+            Vertex::new([1.0, 1.0, 0.0, 1.0], [1.0, 0.0, 0.0, 0.0], [0.0, 0.0]),
+            Vertex::new([-1.0, 1.0, 0.0, 1.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0]),
+            Vertex::new([0.0, -1.0, 0.0, 1.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0]),
+        ];
 
-    // Your own index type?! What are you going to use, `u16`?
-    let indices = [0, 1, 2];
+        // Your own index type?! What are you going to use, `u16`?
+        let indices = [0, 1, 2];
 
-    // Alright, let's build some stuff
-    let (mut lazy_vulkan, mut lazy_renderer, mut event_loop) = LazyVulkan::builder()
-        .initial_vertices(&vertices)
-        .initial_indices(&indices)
-        .fragment_shader(FRAGMENT_SHADER)
-        .vertex_shader(VERTEX_SHADER)
-        .build();
+        // Alright, let's build some stuff
+        let (lazy_vulkan, lazy_renderer) = LazyVulkan::builder()
+            .initial_vertices(&vertices)
+            .initial_indices(&indices)
+            .fragment_shader(FRAGMENT_SHADER)
+            .vertex_shader(VERTEX_SHADER)
+            .build(event_loop);
 
-    // Off we go!
-    let mut winit_initializing = true;
-    event_loop.run_return(|event, _, control_flow| {
-        *control_flow = ControlFlow::Poll;
+        self.lazy_renderer = Some(lazy_renderer);
+        self.lazy_vulkan = Some(lazy_vulkan);
+    }
+
+    fn window_event(
+        &mut self,
+        event_loop: &winit::event_loop::ActiveEventLoop,
+        _: winit::window::WindowId,
+        event: WindowEvent,
+    ) {
         match event {
-            Event::WindowEvent {
+            WindowEvent::CloseRequested
+            | WindowEvent::KeyboardInput {
                 event:
-                    WindowEvent::CloseRequested
-                    | WindowEvent::KeyboardInput {
-                        input:
-                            KeyboardInput {
-                                state: ElementState::Pressed,
-                                virtual_keycode: Some(VirtualKeyCode::Escape),
-                                ..
-                            },
+                    KeyEvent {
+                        state: ElementState::Pressed,
+                        physical_key: PhysicalKey::Code(KeyCode::Escape),
                         ..
                     },
                 ..
-            } => *control_flow = ControlFlow::Exit,
+            } => event_loop.exit(),
 
-            Event::NewEvents(cause) => {
-                if cause == winit::event::StartCause::Init {
-                    winit_initializing = true;
-                } else {
-                    winit_initializing = false;
-                }
-            }
-
-            Event::MainEventsCleared => {
-                let framebuffer_index = lazy_vulkan.render_begin();
-                lazy_renderer.render(
-                    &lazy_vulkan.context(),
-                    framebuffer_index,
-                    &[DrawCall::new(0, 3, NO_TEXTURE_ID, Workflow::Main)],
-                );
-                lazy_vulkan
-                    .render_end(framebuffer_index, &[lazy_vulkan.present_complete_semaphore]);
-            }
-            Event::WindowEvent {
-                event: WindowEvent::Resized(size),
-                ..
-            } => {
-                if winit_initializing {
-                    println!("Ignoring resize during init!");
-                } else {
-                    let new_render_surface = lazy_vulkan.resized(size.width, size.height);
-                    lazy_renderer.update_surface(new_render_surface, &lazy_vulkan.context().device);
-                }
+            WindowEvent::Resized(size) => {
+                let lazy_renderer = self.lazy_renderer.as_mut().unwrap();
+                let lazy_vulkan = self.lazy_vulkan.as_mut().unwrap();
+                let new_render_surface = lazy_vulkan.resized(size.width, size.height);
+                lazy_renderer.update_surface(new_render_surface, &lazy_vulkan.context().device);
             }
             _ => (),
         }
-    });
-
-    // I guess we better do this or else the Dreaded Validation Layers will complain
-    unsafe {
-        lazy_renderer.cleanup(&lazy_vulkan.context().device);
     }
+
+    fn about_to_wait(&mut self, _: &winit::event_loop::ActiveEventLoop) {
+        let lazy_renderer = self.lazy_renderer.as_mut().unwrap();
+        let lazy_vulkan = self.lazy_vulkan.as_mut().unwrap();
+        let framebuffer_index = lazy_vulkan.render_begin();
+        lazy_renderer.render(
+            &lazy_vulkan.context(),
+            framebuffer_index,
+            &[DrawCall::new(0, 3, NO_TEXTURE_ID, Workflow::Main)],
+        );
+        lazy_vulkan.render_end(framebuffer_index, &[lazy_vulkan.present_complete_semaphore]);
+    }
+}
+
+pub fn main() {
+    env_logger::init();
+
+    let event_loop = EventLoop::builder().build().unwrap();
+    event_loop.set_control_flow(ControlFlow::Poll);
+    event_loop.run_app(&mut App::default()).unwrap();
 }
