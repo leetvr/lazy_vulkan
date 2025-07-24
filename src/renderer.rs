@@ -2,7 +2,7 @@ use std::{sync::Arc, u64};
 
 use ash::vk::{self};
 
-use crate::{draw_params::DrawParams, sub_renderer::SubRenderer};
+use crate::{core::Core, draw_params::DrawParams, sub_renderer::SubRenderer};
 
 use super::{
     allocator::Allocator,
@@ -20,10 +20,14 @@ pub struct Renderer<'a, T> {
     pub depth_buffer: DepthBuffer,
     pub sub_renderers: Vec<Box<dyn SubRenderer<'a, T>>>,
     pub allocator: Allocator,
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    pub dynamic_rendering_pfn: ash::khr::dynamic_rendering::Device,
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    pub sync2_pfn: ash::khr::synchronization2::Device,
 }
 
 impl<'a, T> Renderer<'a, T> {
-    pub(crate) fn new(context: Arc<Context>, swapchain: Swapchain) -> Self {
+    pub(crate) fn new(core: &Core, context: Arc<Context>, swapchain: Swapchain) -> Self {
         let device = &context.device;
 
         let rendering_complete =
@@ -37,7 +41,13 @@ impl<'a, T> Renderer<'a, T> {
         }
         .unwrap();
 
-        let allocator = Allocator::new(context.clone());
+        #[cfg(any(target_os = "macos", target_os = "ios"))]
+        let dynamic_rendering_pfn =
+            ash::khr::dynamic_rendering::Device::new(&core.instance, device);
+        #[cfg(any(target_os = "macos", target_os = "ios"))]
+        let sync2_pfn = ash::khr::synchronization2::Device::new(&core.instance, device);
+
+        let allocator = Allocator::new(context.clone(), sync2_pfn.clone());
         let depth_buffer = DepthBuffer::new(&context, &swapchain);
 
         Self {
@@ -48,6 +58,8 @@ impl<'a, T> Renderer<'a, T> {
             depth_buffer,
             sub_renderers: vec![],
             allocator,
+            dynamic_rendering_pfn,
+            sync2_pfn,
         }
     }
 
@@ -118,7 +130,7 @@ impl<'a, T> Renderer<'a, T> {
 
         unsafe {
             // Transition the rendering attachments into their correct state
-            device.cmd_pipeline_barrier2(
+            self.cmd_pipeline_barrier2(
                 command_buffer,
                 &vk::DependencyInfo::default().image_memory_barriers(&[
                     // Swapchain image
@@ -148,7 +160,7 @@ impl<'a, T> Renderer<'a, T> {
             );
 
             // Begin rendering
-            device.cmd_begin_rendering(
+            self.cmd_begin_rendering(
                 command_buffer,
                 &vk::RenderingInfo::default()
                     .render_area(render_area.into())
@@ -201,10 +213,10 @@ impl<'a, T> Renderer<'a, T> {
 
         unsafe {
             // End rendering
-            device.cmd_end_rendering(command_buffer);
+            self.cmd_end_rendering(command_buffer);
 
             // Next, transition the color attachment into the present state
-            device.cmd_pipeline_barrier2(
+            self.cmd_pipeline_barrier2(
                 command_buffer,
                 &vk::DependencyInfo::default().image_memory_barriers(&[
                     vk::ImageMemoryBarrier2::default()
@@ -223,22 +235,95 @@ impl<'a, T> Renderer<'a, T> {
             device.end_command_buffer(command_buffer).unwrap();
 
             // Submit the work to the queue
-            device
-                .queue_submit2(
-                    queue,
-                    &[vk::SubmitInfo2::default()
-                        .command_buffer_infos(&[
-                            vk::CommandBufferSubmitInfo::default().command_buffer(command_buffer)
-                        ])
-                        .wait_semaphore_infos(&[vk::SemaphoreSubmitInfo::default()
-                            .semaphore(drawable.ready)
-                            .stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)])
-                        .signal_semaphore_infos(&[vk::SemaphoreSubmitInfo::default()
-                            .semaphore(self.rendering_complete)
-                            .stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)])],
-                    self.fence,
-                )
-                .unwrap();
+            self.queue_submit2(
+                queue,
+                &[vk::SubmitInfo2::default()
+                    .command_buffer_infos(&[
+                        vk::CommandBufferSubmitInfo::default().command_buffer(command_buffer)
+                    ])
+                    .wait_semaphore_infos(&[vk::SemaphoreSubmitInfo::default()
+                        .semaphore(drawable.ready)
+                        .stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)])
+                    .signal_semaphore_infos(&[vk::SemaphoreSubmitInfo::default()
+                        .semaphore(self.rendering_complete)
+                        .stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)])],
+                self.fence,
+            );
         }
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+    pub unsafe fn cmd_pipeline_barrier2(
+        &self,
+        command_buffer: vk::CommandBuffer,
+        dependency_info: &vk::DependencyInfo,
+    ) {
+        self.context
+            .device
+            .cmd_pipeline_barrier2(command_buffer, dependency_info);
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    pub unsafe fn cmd_pipeline_barrier2(
+        &self,
+        command_buffer: vk::CommandBuffer,
+        dependency_info: &vk::DependencyInfo,
+    ) {
+        self.sync2_pfn
+            .cmd_pipeline_barrier2(command_buffer, dependency_info);
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+    pub unsafe fn cmd_begin_rendering(
+        &self,
+        command_buffer: vk::CommandBuffer,
+        rendering_info: &vk::RenderingInfo,
+    ) {
+        self.context
+            .device
+            .cmd_begin_rendering(command_buffer, rendering_info);
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    pub unsafe fn cmd_begin_rendering(
+        &self,
+        command_buffer: vk::CommandBuffer,
+        rendering_info: &vk::RenderingInfo,
+    ) {
+        self.dynamic_rendering_pfn
+            .cmd_begin_rendering(command_buffer, rendering_info);
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+    pub unsafe fn cmd_end_rendering(&self, command_buffer: vk::CommandBuffer) {
+        self.context.device.cmd_end_rendering(command_buffer);
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    pub unsafe fn cmd_end_rendering(&self, command_buffer: vk::CommandBuffer) {
+        self.dynamic_rendering_pfn.cmd_end_rendering(command_buffer);
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+    pub unsafe fn queue_submit2(
+        &self,
+        queue: vk::Queue,
+        submits: &[vk::SubmitInfo2KHR],
+        fence: vk::Fence,
+    ) {
+        self.context
+            .device
+            .queue_submit2(queue, submits, fence)
+            .unwrap()
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    pub unsafe fn queue_submit2(
+        &self,
+        queue: vk::Queue,
+        submits: &[vk::SubmitInfo2KHR],
+        fence: vk::Fence,
+    ) {
+        self.sync2_pfn.queue_submit2(queue, submits, fence).unwrap()
     }
 }

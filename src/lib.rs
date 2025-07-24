@@ -39,7 +39,7 @@ impl<'a, T> LazyVulkan<'a, T> {
         let core = Core::new(&window);
         let context = Arc::new(Context::new(&core));
         let swapchain = Swapchain::new(&context.device, &core, &window, vk::SwapchainKHR::null());
-        let mut renderer = Renderer::new(context.clone(), swapchain);
+        let mut renderer = Renderer::new(&core, context.clone(), swapchain);
         renderer.sub_renderers = create_subrenderers(&renderer);
 
         LazyVulkan {

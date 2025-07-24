@@ -19,10 +19,12 @@ pub struct Allocator {
     #[allow(unused)]
     pub pending_frees: Vec<PendingFree>,
     offset_allocator: offset_allocator::Allocator,
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    pub sync2_pfn: ash::khr::synchronization2::Device,
 }
 
 impl Allocator {
-    pub fn new(context: Arc<Context>) -> Self {
+    pub fn new(context: Arc<Context>, sync2_pfn: ash::khr::synchronization2::Device) -> Self {
         let device = &context.device;
         let memory_properties = &context.memory_properties;
 
@@ -123,6 +125,8 @@ impl Allocator {
             offset_allocator,
             pending_frees: Default::default(),
             pending_transfers: Default::default(),
+            #[cfg(any(target_os = "macos", target_os = "ios"))]
+            sync2_pfn,
         }
     }
 
@@ -259,7 +263,13 @@ impl Allocator {
 
         // Step two: set the barriers
         unsafe {
+            #[cfg(not(any(target_os = "macos", target_os = "ios")))]
             device.cmd_pipeline_barrier2(
+                command_buffer,
+                &vk::DependencyInfo::default().buffer_memory_barriers(&barriers),
+            );
+            #[cfg(any(target_os = "macos", target_os = "ios"))]
+            self.sync2_pfn.cmd_pipeline_barrier2(
                 command_buffer,
                 &vk::DependencyInfo::default().buffer_memory_barriers(&barriers),
             );

@@ -16,41 +16,7 @@ impl Context {
         let instance = &core.instance;
         let physical_device = core.physical_device;
 
-        #[allow(unused_mut)]
-        let mut enabled_extension_names = vec![ash::khr::swapchain::NAME.as_ptr()];
-
-        #[cfg(any(target_os = "macos", target_os = "ios"))]
-        enabled_extension_names.push(ash::khr::portability_subset::NAME.as_ptr());
-
-        let device = unsafe {
-            instance.create_device(
-                physical_device,
-                &vk::DeviceCreateInfo::default()
-                    .enabled_extension_names(&enabled_extension_names)
-                    .queue_create_infos(&[vk::DeviceQueueCreateInfo::default()
-                        .queue_family_index(0)
-                        .queue_priorities(&[1.0])])
-                    .enabled_features(
-                        &vk::PhysicalDeviceFeatures::default().fill_mode_non_solid(true),
-                    )
-                    .push_next(
-                        &mut vk::PhysicalDeviceVulkan13Features::default()
-                            .dynamic_rendering(true)
-                            .synchronization2(true),
-                    )
-                    .push_next(
-                        &mut vk::PhysicalDeviceVulkan12Features::default()
-                            .buffer_device_address(true),
-                    )
-                    .push_next(
-                        &mut vk::PhysicalDeviceVulkan11Features::default()
-                            .variable_pointers(true)
-                            .variable_pointers_storage_buffer(true),
-                    ),
-                None,
-            )
-        }
-        .unwrap();
+        let device = create_device(instance, physical_device);
 
         let command_pool = unsafe {
             device.create_command_pool(
@@ -102,4 +68,70 @@ impl Context {
         }
         None
     }
+}
+
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+fn create_device(instance: &ash::Instance, physical_device: vk::PhysicalDevice) -> ash::Device {
+    let enabled_extension_names = [
+        ash::khr::swapchain::NAME.as_ptr(),
+        ash::khr::portability_subset::NAME.as_ptr(),
+        ash::khr::dynamic_rendering::NAME.as_ptr(),
+        ash::khr::synchronization2::NAME.as_ptr(),
+    ];
+
+    let device = unsafe {
+        instance.create_device(
+            physical_device,
+            &vk::DeviceCreateInfo::default()
+                .enabled_extension_names(&enabled_extension_names)
+                .queue_create_infos(&[vk::DeviceQueueCreateInfo::default()
+                    .queue_family_index(0)
+                    .queue_priorities(&[1.0])])
+                .enabled_features(&vk::PhysicalDeviceFeatures::default().fill_mode_non_solid(true))
+                .push_next(
+                    &mut vk::PhysicalDeviceVulkan12Features::default().buffer_device_address(true),
+                )
+                .push_next(
+                    &mut vk::PhysicalDeviceVulkan11Features::default()
+                        .variable_pointers(true)
+                        .variable_pointers_storage_buffer(true),
+                ),
+            None,
+        )
+    }
+    .unwrap();
+    device
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "ios")))]
+fn create_device(instance: &ash::Instance, physical_device: vk::PhysicalDevice) -> ash::Device {
+    let enabled_extension_names = [ash::khr::swapchain::NAME.as_ptr()];
+
+    let device = unsafe {
+        instance.create_device(
+            physical_device,
+            &vk::DeviceCreateInfo::default()
+                .enabled_extension_names(&enabled_extension_names)
+                .queue_create_infos(&[vk::DeviceQueueCreateInfo::default()
+                    .queue_family_index(0)
+                    .queue_priorities(&[1.0])])
+                .enabled_features(&vk::PhysicalDeviceFeatures::default().fill_mode_non_solid(true))
+                .push_next(
+                    &mut vk::PhysicalDeviceVulkan13Features::default()
+                        .dynamic_rendering(true)
+                        .synchronization2(true),
+                )
+                .push_next(
+                    &mut vk::PhysicalDeviceVulkan12Features::default().buffer_device_address(true),
+                )
+                .push_next(
+                    &mut vk::PhysicalDeviceVulkan11Features::default()
+                        .variable_pointers(true)
+                        .variable_pointers_storage_buffer(true),
+                ),
+            None,
+        )
+    }
+    .unwrap();
+    device
 }

@@ -52,7 +52,7 @@ impl<'a> ApplicationHandler for App<'a> {
 
             WindowEvent::Resized(size) => {
                 let lazy_vulkan = self.lazy_vulkan.as_mut().unwrap();
-                lazy_vulkan.resize(size.height, size.width);
+                lazy_vulkan.resize(size.width, size.height);
             }
             _ => (),
         }
