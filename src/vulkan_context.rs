@@ -396,13 +396,13 @@ pub fn create_device(
     physical_device: vk::PhysicalDevice,
 ) -> ash::Device {
     #[cfg(any(target_os = "macos", target_os = "ios"))]
-    extension_names.push(vk::KhrPortabilitySubsetFn::name().as_ptr());
+    extension_names.push(ash::khr::portability_subset::NAME.as_ptr());
 
     #[cfg(target_os = "windows")]
-    extension_names.push(ash::extensions::khr::ExternalMemoryWin32::name().as_ptr());
+    extension_names.push(ash::khr::external_memory_win32::NAME.as_ptr());
 
     #[cfg(target_os = "windows")]
-    extension_names.push(ash::extensions::khr::ExternalSemaphoreWin32::name().as_ptr());
+    extension_names.push(ash::khr::external_semaphore_win32::NAME.as_ptr());
 
     let priorities = [1.0];
     let queue_info = vk::DeviceQueueCreateInfo::default()
@@ -483,9 +483,8 @@ pub fn get_physical_device(
 pub fn init(extension_names: &mut Vec<*const std::ffi::c_char>) -> (ash::Entry, ash::Instance) {
     #[cfg(any(target_os = "macos", target_os = "ios"))]
     {
-        extension_names.push(vk::KhrPortabilityEnumerationFn::name().as_ptr());
-        // Enabling this extension is a requirement when using `VK_KHR_portability_subset`
-        extension_names.push(vk::KhrGetPhysicalDeviceProperties2Fn::name().as_ptr());
+        extension_names.push(ash::khr::portability_enumeration::NAME.as_ptr());
+        extension_names.push(ash::khr::get_physical_device_properties2::NAME.as_ptr());
     }
 
     let entry = ash::Entry::linked();
