@@ -1,8 +1,8 @@
-use std::{sync::Arc, u64};
+use std::{path::Path, sync::Arc, u64};
 
 use ash::vk::{self};
 
-use crate::{core::Core, draw_params::DrawParams, sub_renderer::SubRenderer};
+use crate::{core::Core, draw_params::DrawParams, sub_renderer::SubRenderer, Pipeline};
 
 use super::{
     allocator::Allocator,
@@ -244,6 +244,19 @@ impl Renderer {
                 self.fence,
             );
         }
+    }
+
+    pub fn create_pipeline<R>(
+        &self,
+        vertex_shader: impl AsRef<Path>,
+        fragment_shader: impl AsRef<Path>,
+    ) -> Pipeline {
+        Pipeline::new::<R>(
+            self.context.clone(),
+            self.swapchain.format,
+            vertex_shader,
+            fragment_shader,
+        )
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "ios")))]

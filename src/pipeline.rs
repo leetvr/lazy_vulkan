@@ -13,7 +13,8 @@ pub struct Pipeline {
 }
 
 impl Pipeline {
-    pub fn new<Registers: Sized>(
+    // TODO: Watch shaders!
+    pub fn new<Registers>(
         context: Arc<Context>,
         format: vk::Format,
         vertex_shader: impl AsRef<Path>,

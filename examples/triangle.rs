@@ -84,6 +84,10 @@ struct State {
     render_state: RenderState,
 }
 
+// ------------
+// BOILERPLATE
+// ------------
+
 impl<'a> ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
         let window = event_loop
