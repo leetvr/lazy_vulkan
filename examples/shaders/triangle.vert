@@ -1,14 +1,19 @@
 #version 450
 
-layout(location = 0) in vec4 in_position;
-layout(location = 1) in vec4 in_colour;
-layout(location = 2) in vec2 in_uv;
+layout(push_constant) uniform Registers {
+    vec4 colour;
+} registers;
+layout(location = 0) out vec3 vColor;
 
-layout(location = 0) out vec4 out_colour;
-layout(location = 1) out vec2 out_uv;
+vec2 positions[3] = vec2[](
+        vec2(0.0, -0.5), // top
+        vec2(-0.5, 0.5), // bottom-left
+        vec2(0.5, 0.5) // bottom-right
+    );
 
 void main() {
-    gl_Position = in_position;
-    out_colour = in_colour;
-    out_uv = in_uv;
+    // Pick the position based on the built-in vertex index
+    gl_Position = vec4(positions[gl_VertexIndex], 0.0, 1.0);
+
+    vColor = registers.colour.xyz;
 }

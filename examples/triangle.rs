@@ -1,4 +1,7 @@
-use lazy_vulkan::{LazyVulkan, SubRenderer};
+use std::{path::Path, time::Instant};
+
+use glam::Vec4;
+use lazy_vulkan::{Context, LazyVulkan, SubRenderer};
 use winit::{
     application::ApplicationHandler,
     dpi::PhysicalSize,
@@ -7,17 +10,81 @@ use winit::{
     keyboard::{KeyCode, PhysicalKey},
     window::WindowAttributes,
 };
-/// Compile your own damn shaders! LazyVulkan is just as lazy as you are!
-static FRAGMENT_SHADER: &'static [u8] = include_bytes!("shaders/triangle.frag.spv");
-static VERTEX_SHADER: &'static [u8] = include_bytes!("shaders/triangle.vert.spv");
 
-// Fucking winit
-#[derive(Default)]
-struct App<'a> {
-    lazy_vulkan: Option<LazyVulkan<'a, ()>>,
+pub struct TriangleRenderer {
+    pipeline: lazy_vulkan::Pipeline,
+    pub colour: glam::Vec4,
 }
 
-impl<'a> ApplicationHandler for App<'a> {
+impl TriangleRenderer {
+    pub fn new(renderer: &lazy_vulkan::Renderer) -> Self {
+        let pipeline: lazy_vulkan::Pipeline = lazy_vulkan::Pipeline::new::<Registers>(
+            renderer.context.clone(),
+            renderer.swapchain.format,
+            Path::new("examples/shaders/triangle.vert.spv"),
+            Path::new("examples/shaders/triangle.frag.spv"),
+        );
+
+        Self {
+            pipeline,
+            colour: glam::Vec4::ONE,
+        }
+    }
+}
+
+impl SubRenderer for TriangleRenderer {
+    type State = RenderState;
+    fn draw(&mut self, context: &Context, params: lazy_vulkan::DrawParams) {
+        self.begin_rendering(params.draw_command_buffer, context, &self.pipeline);
+        unsafe {
+            self.pipeline.update_registers(
+                params.draw_command_buffer,
+                context,
+                &Registers {
+                    colour: self.colour,
+                },
+            );
+            context
+                .device
+                .cmd_draw(params.draw_command_buffer, 3, 1, 0, 0)
+        }
+    }
+
+    fn update_state(&mut self, state: &RenderState) {
+        self.colour = psychedelic_vec4(state.t, state.last_render_time.elapsed().as_secs_f32())
+    }
+
+    fn stage_transfers(&mut self, _allocator: &mut lazy_vulkan::Allocator) {
+        // no-op
+    }
+}
+
+pub struct RenderState {
+    last_render_time: Instant,
+    t: f32,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+struct Registers {
+    colour: glam::Vec4,
+}
+
+unsafe impl bytemuck::Zeroable for Registers {}
+unsafe impl bytemuck::Pod for Registers {}
+
+#[derive(Default)]
+struct App {
+    state: Option<State>,
+}
+
+struct State {
+    lazy_vulkan: LazyVulkan,
+    sub_renderers: Vec<Box<dyn SubRenderer<State = RenderState>>>,
+    render_state: RenderState,
+}
+
+impl<'a> ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
         let window = event_loop
             .create_window(
@@ -26,10 +93,18 @@ impl<'a> ApplicationHandler for App<'a> {
                     .with_inner_size(PhysicalSize::new(1024, 768)),
             )
             .unwrap();
-        self.lazy_vulkan = Some(LazyVulkan::new(
-            window,
-            |_: &lazy_vulkan::Renderer<'a, _>| vec![],
-        ));
+
+        let lazy_vulkan = LazyVulkan::from_window(window);
+        let sub_renderer = TriangleRenderer::new(&lazy_vulkan.renderer);
+
+        self.state = Some(State {
+            lazy_vulkan,
+            sub_renderers: vec![Box::new(sub_renderer)],
+            render_state: RenderState {
+                t: 0.0,
+                last_render_time: Instant::now(),
+            },
+        });
     }
 
     fn window_event(
@@ -51,29 +126,35 @@ impl<'a> ApplicationHandler for App<'a> {
             } => event_loop.exit(),
 
             WindowEvent::Resized(size) => {
-                let lazy_vulkan = self.lazy_vulkan.as_mut().unwrap();
-                lazy_vulkan.resize(size.width, size.height);
+                let state = self.state.as_mut().unwrap();
+                state.lazy_vulkan.resize(size.width, size.height);
             }
             _ => (),
         }
     }
 
     fn about_to_wait(&mut self, _: &winit::event_loop::ActiveEventLoop) {
-        let lazy_vulkan = self.lazy_vulkan.as_mut().unwrap();
-        lazy_vulkan.draw(&());
+        let state = self.state.as_mut().unwrap();
+        state.render_state.t += state.render_state.last_render_time.elapsed().as_secs_f32();
+        let lazy_vulkan = &mut state.lazy_vulkan;
+        lazy_vulkan.draw(&state.render_state, &mut state.sub_renderers);
+        state.render_state.last_render_time = Instant::now();
     }
 }
 
-pub struct TriangleRenderer {}
+// from chatGPT
+pub fn psychedelic_vec4(t: f32, dt: f32) -> Vec4 {
+    let mut time = t + dt;
 
-impl<'a, T> SubRenderer<'a, T> for TriangleRenderer {
-    fn draw(&mut self, params: lazy_vulkan::DrawParams<'a, T>) {
-        todo!()
-    }
+    time *= 50.0;
 
-    fn stage_transfers(&mut self, allocator: &mut lazy_vulkan::Allocator) {
-        todo!()
-    }
+    let r = (time * 1.0 + 0.0).sin() * 0.5 + 0.5;
+    let g = (time * 1.3 + std::f32::consts::FRAC_PI_2).sin() * 0.5 + 0.5;
+    let b = (time * 1.6 + std::f32::consts::PI).sin() * 0.5 + 0.5;
+
+    let a = (time * 0.4).cos() * 0.5 + 0.5;
+
+    Vec4::new(r, g, b, a)
 }
 
 pub fn main() {

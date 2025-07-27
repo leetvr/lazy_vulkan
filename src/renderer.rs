@@ -12,13 +12,11 @@ use super::{
     FULL_IMAGE,
 };
 
-pub struct Renderer<'a, T> {
+pub struct Renderer {
     pub context: Arc<Context>,
     pub fence: vk::Fence,
-    pub rendering_complete: vk::Semaphore,
     pub swapchain: Swapchain,
     pub depth_buffer: DepthBuffer,
-    pub sub_renderers: Vec<Box<dyn SubRenderer<'a, T>>>,
     pub allocator: Allocator,
     #[cfg(any(target_os = "macos", target_os = "ios"))]
     pub dynamic_rendering_pfn: ash::khr::dynamic_rendering::Device,
@@ -26,12 +24,9 @@ pub struct Renderer<'a, T> {
     pub sync2_pfn: ash::khr::synchronization2::Device,
 }
 
-impl<'a, T> Renderer<'a, T> {
+impl Renderer {
     pub(crate) fn new(core: &Core, context: Arc<Context>, swapchain: Swapchain) -> Self {
         let device = &context.device;
-
-        let rendering_complete =
-            unsafe { device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None) }.unwrap();
 
         let fence = unsafe {
             device.create_fence(
@@ -52,44 +47,40 @@ impl<'a, T> Renderer<'a, T> {
 
         Self {
             context,
-            rendering_complete,
             fence,
             swapchain,
             depth_buffer,
-            sub_renderers: vec![],
             allocator,
             dynamic_rendering_pfn,
             sync2_pfn,
         }
     }
 
-    pub(crate) fn draw(&mut self, state: &'a T) {
+    pub fn draw<S>(&mut self, sub_renderers: &mut [Box<dyn SubRenderer<State = S>>]) {
         // Begin rendering
         let drawable = self.begin_rendering();
 
-        // Execute any pending transfers from the previous frame
-        self.allocator.execute_transfers();
-
         // Stage transfers for the next frame
-        for subrenderer in &mut self.sub_renderers {
+        for subrenderer in &mut *sub_renderers {
             subrenderer.stage_transfers(&mut self.allocator);
         }
 
         // Draw with our sub-renderers
-        for subrenderer in &mut self.sub_renderers {
-            let params = DrawParams::new(drawable, self.depth_buffer, state);
-            subrenderer.draw(params);
+        for subrenderer in &mut *sub_renderers {
+            let params = DrawParams::new(
+                self.context.draw_command_buffer,
+                drawable,
+                self.depth_buffer,
+            );
+            subrenderer.draw(&self.context, params);
         }
 
         // End rendering
         self.end_rendering(drawable);
 
         // Present
-        self.swapchain.present(
-            drawable,
-            self.context.graphics_queue,
-            self.rendering_complete,
-        );
+        self.swapchain
+            .present(drawable, self.context.graphics_queue);
     }
 
     fn begin_rendering(&mut self) -> Drawable {
@@ -127,6 +118,9 @@ impl<'a, T> Renderer<'a, T> {
                 .begin_command_buffer(command_buffer, &vk::CommandBufferBeginInfo::default())
                 .unwrap()
         };
+
+        // Execute any pending transfers from the previous frame
+        self.allocator.execute_transfers();
 
         unsafe {
             // Transition the rendering attachments into their correct state
@@ -242,10 +236,10 @@ impl<'a, T> Renderer<'a, T> {
                         vk::CommandBufferSubmitInfo::default().command_buffer(command_buffer)
                     ])
                     .wait_semaphore_infos(&[vk::SemaphoreSubmitInfo::default()
-                        .semaphore(drawable.ready)
+                        .semaphore(drawable.image_available)
                         .stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)])
                     .signal_semaphore_infos(&[vk::SemaphoreSubmitInfo::default()
-                        .semaphore(self.rendering_complete)
+                        .semaphore(drawable.rendering_complete)
                         .stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)])],
                 self.fence,
             );

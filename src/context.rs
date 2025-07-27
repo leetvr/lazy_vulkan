@@ -89,6 +89,14 @@ fn create_device(instance: &ash::Instance, physical_device: vk::PhysicalDevice) 
                     .queue_priorities(&[1.0])])
                 .enabled_features(&vk::PhysicalDeviceFeatures::default().fill_mode_non_solid(true))
                 .push_next(
+                    &mut vk::PhysicalDeviceDynamicRenderingFeatures::default()
+                        .dynamic_rendering(true),
+                )
+                .push_next(
+                    &mut vk::PhysicalDeviceSynchronization2Features::default()
+                        .synchronization2(true),
+                )
+                .push_next(
                     &mut vk::PhysicalDeviceVulkan12Features::default().buffer_device_address(true),
                 )
                 .push_next(

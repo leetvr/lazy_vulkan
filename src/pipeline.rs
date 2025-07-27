@@ -13,7 +13,12 @@ pub struct Pipeline {
 }
 
 impl Pipeline {
-    pub fn new(context: Arc<Context>, format: vk::Format) -> Self {
+    pub fn new<Registers: Sized>(
+        context: Arc<Context>,
+        format: vk::Format,
+        vertex_shader: impl AsRef<Path>,
+        fragment_shader: impl AsRef<Path>,
+    ) -> Self {
         let device = &context.device;
 
         let layout = unsafe {
@@ -21,7 +26,7 @@ impl Pipeline {
                 &vk::PipelineLayoutCreateInfo::default().push_constant_ranges(&[
                     vk::PushConstantRange::default()
                         .size(std::mem::size_of::<Registers>() as u32)
-                        .stage_flags(vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT),
+                        .stage_flags(vk::ShaderStageFlags::ALL_GRAPHICS),
                 ]),
                 None,
             )
@@ -35,11 +40,11 @@ impl Pipeline {
                     .stages(&[
                         vk::PipelineShaderStageCreateInfo::default()
                             .name(c"main")
-                            .module(load_module("main.vertex.spv", &context))
+                            .module(load_module(vertex_shader, &context))
                             .stage(vk::ShaderStageFlags::VERTEX),
                         vk::PipelineShaderStageCreateInfo::default()
                             .name(c"main")
-                            .module(load_module("main.fragment.spv", &context))
+                            .module(load_module(fragment_shader, &context))
                             .stage(vk::ShaderStageFlags::FRAGMENT),
                     ])
                     .vertex_input_state(&vk::PipelineVertexInputStateCreateInfo::default())
@@ -102,10 +107,26 @@ impl Pipeline {
             handle,
         }
     }
+
+    pub fn update_registers<Registers: bytemuck::Pod>(
+        &self,
+        draw_command_buffer: vk::CommandBuffer,
+        context: &Context,
+        registers: &Registers,
+    ) {
+        unsafe {
+            context.device.cmd_push_constants(
+                draw_command_buffer,
+                self.layout,
+                vk::ShaderStageFlags::ALL_GRAPHICS,
+                0,
+                bytemuck::bytes_of(registers),
+            )
+        };
+    }
 }
 
-fn load_module(path: &str, context: &Context) -> vk::ShaderModule {
-    let path = Path::new("assets/shaders/").join(path);
+fn load_module(path: impl AsRef<Path>, context: &Context) -> vk::ShaderModule {
     let mut file = std::fs::File::open(path).unwrap();
     let words = ash::util::read_spv(&mut file).unwrap();
 
@@ -115,11 +136,4 @@ fn load_module(path: &str, context: &Context) -> vk::ShaderModule {
             .create_shader_module(&vk::ShaderModuleCreateInfo::default().code(&words), None)
     }
     .unwrap()
-}
-
-#[repr(C)]
-#[derive(Debug, Clone)]
-pub struct Registers {
-    pub ndc_from_local: glam::Mat4,
-    pub vertex_buffer: vk::DeviceAddress,
 }

@@ -13,6 +13,7 @@ pub struct Swapchain {
     pub needs_update: bool,
     image_available: vk::Semaphore,
     capabilities: vk::SurfaceCapabilitiesKHR,
+    rendering_complete_semaphores: [vk::Semaphore; 3],
 }
 
 impl Swapchain {
@@ -70,6 +71,10 @@ impl Swapchain {
         let image_available =
             unsafe { device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None) }.unwrap();
 
+        let rendering_complete_semaphores = [unsafe {
+            device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None)
+        }
+        .unwrap(); 3];
         Self {
             surface_handle,
             surface_fn,
@@ -82,6 +87,7 @@ impl Swapchain {
             needs_update: false,
             image_available,
             capabilities,
+            rendering_complete_semaphores,
         }
     }
 
@@ -109,9 +115,10 @@ impl Swapchain {
         Some(Drawable {
             image: self.images[index as usize],
             view: self.image_views[index as usize],
-            ready: self.image_available,
+            image_available: self.image_available,
             index,
             extent: self.extent,
+            rendering_complete: self.rendering_complete_semaphores[index as usize],
         })
     }
 
@@ -144,13 +151,13 @@ impl Swapchain {
         self.needs_update = false;
     }
 
-    pub fn present(&self, drawable: Drawable, queue: vk::Queue, rendering_complete: vk::Semaphore) {
+    pub fn present(&self, drawable: Drawable, queue: vk::Queue) {
         unsafe {
             self.swapchain_fn
                 .queue_present(
                     queue,
                     &vk::PresentInfoKHR::default()
-                        .wait_semaphores(&[rendering_complete])
+                        .wait_semaphores(&[drawable.rendering_complete])
                         .image_indices(&[drawable.index])
                         .swapchains(&[self.swapchain_handle]),
                 )
@@ -223,7 +230,8 @@ fn build_swapchain(
 pub struct Drawable {
     pub image: vk::Image,
     pub view: vk::ImageView,
-    pub ready: vk::Semaphore,
+    pub image_available: vk::Semaphore,
+    pub rendering_complete: vk::Semaphore,
     pub index: u32,
     pub extent: vk::Extent2D,
 }
