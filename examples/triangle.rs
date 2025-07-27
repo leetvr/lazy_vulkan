@@ -22,7 +22,7 @@ impl TriangleRenderer {
             renderer.context.clone(),
             renderer.swapchain.format,
             Path::new("examples/shaders/triangle.vert.spv"),
-            Path::new("examples/shaders/triangle.frag.spv"),
+            Path::new("examples/shaders/colour.frag.spv"),
         );
 
         Self {

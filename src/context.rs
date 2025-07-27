@@ -9,6 +9,7 @@ pub struct Context {
     pub draw_command_buffer: vk::CommandBuffer,
     pub graphics_queue: vk::Queue,
     pub memory_properties: vk::PhysicalDeviceMemoryProperties,
+    pub device_type: vk::PhysicalDeviceType,
 }
 
 impl Context {
@@ -42,12 +43,16 @@ impl Context {
         let memory_properties =
             unsafe { instance.get_physical_device_memory_properties(physical_device) };
 
+        let physical_device_properties =
+            unsafe { instance.get_physical_device_properties(physical_device) };
+
         Self {
             device,
             command_pool,
             draw_command_buffer,
             graphics_queue,
             memory_properties,
+            device_type: physical_device_properties.device_type,
         }
     }
 
