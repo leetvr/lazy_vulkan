@@ -1,4 +1,4 @@
-pub use allocator::Allocator;
+pub use allocator::{Allocator, BufferAllocation, TransferToken};
 pub use ash;
 pub use context::Context;
 pub use draw_params::DrawParams;

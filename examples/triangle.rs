@@ -22,7 +22,7 @@ impl TriangleRenderer {
             renderer.context.clone(),
             renderer.swapchain.format,
             Path::new("examples/shaders/triangle.vert.spv"),
-            Path::new("examples/shaders/triangle.frag.spv"),
+            Path::new("examples/shaders/colour.frag.spv"),
         );
 
         Self {
@@ -83,6 +83,10 @@ struct State {
     sub_renderers: Vec<Box<dyn SubRenderer<State = RenderState>>>,
     render_state: RenderState,
 }
+
+// ------------
+// BOILERPLATE
+// ------------
 
 impl<'a> ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
