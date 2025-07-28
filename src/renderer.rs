@@ -2,7 +2,10 @@ use std::{path::Path, sync::Arc, u64};
 
 use ash::vk::{self};
 
-use crate::{core::Core, draw_params::DrawParams, sub_renderer::SubRenderer, Pipeline};
+use crate::{
+    descriptors::Descriptors, draw_params::DrawParams, image_manager::ImageManager,
+    sub_renderer::SubRenderer, Image, Pipeline,
+};
 
 use super::{
     allocator::Allocator,
@@ -18,14 +21,12 @@ pub struct Renderer {
     pub swapchain: Swapchain,
     pub depth_buffer: DepthBuffer,
     pub allocator: Allocator,
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
-    pub dynamic_rendering_pfn: ash::khr::dynamic_rendering::Device,
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
-    pub sync2_pfn: ash::khr::synchronization2::Device,
+    pub image_manager: ImageManager,
+    pub descriptors: Descriptors,
 }
 
 impl Renderer {
-    pub(crate) fn new(core: &Core, context: Arc<Context>, swapchain: Swapchain) -> Self {
+    pub(crate) fn new(context: Arc<Context>, swapchain: Swapchain) -> Self {
         let device = &context.device;
 
         let fence = unsafe {
@@ -36,14 +37,10 @@ impl Renderer {
         }
         .unwrap();
 
-        #[cfg(any(target_os = "macos", target_os = "ios"))]
-        let dynamic_rendering_pfn =
-            ash::khr::dynamic_rendering::Device::new(&core.instance, device);
-        #[cfg(any(target_os = "macos", target_os = "ios"))]
-        let sync2_pfn = ash::khr::synchronization2::Device::new(&core.instance, device);
-
-        let allocator = Allocator::new(context.clone(), sync2_pfn.clone());
+        let allocator = Allocator::new(context.clone());
+        let image_manager = ImageManager::new(context.clone());
         let depth_buffer = DepthBuffer::new(&context, &swapchain);
+        let descriptors = Descriptors::new(context.clone());
 
         Self {
             context,
@@ -51,8 +48,8 @@ impl Renderer {
             swapchain,
             depth_buffer,
             allocator,
-            dynamic_rendering_pfn,
-            sync2_pfn,
+            image_manager,
+            descriptors,
         }
     }
 
@@ -84,7 +81,8 @@ impl Renderer {
     }
 
     fn begin_rendering(&mut self) -> Drawable {
-        let device = &self.context.device;
+        let context = &self.context;
+        let device = &context.device;
 
         if self.swapchain.needs_update {
             unsafe { device.device_wait_idle().unwrap() };
@@ -124,7 +122,7 @@ impl Renderer {
 
         unsafe {
             // Transition the rendering attachments into their correct state
-            self.cmd_pipeline_barrier2(
+            context.cmd_pipeline_barrier2(
                 command_buffer,
                 &vk::DependencyInfo::default().image_memory_barriers(&[
                     // Swapchain image
@@ -154,7 +152,7 @@ impl Renderer {
             );
 
             // Begin rendering
-            self.cmd_begin_rendering(
+            context.cmd_begin_rendering(
                 command_buffer,
                 &vk::RenderingInfo::default()
                     .render_area(render_area.into())
@@ -200,17 +198,18 @@ impl Renderer {
     }
 
     fn end_rendering(&self, drawable: Drawable) {
-        let device = &self.context.device;
-        let queue = self.context.graphics_queue;
-        let command_buffer = self.context.draw_command_buffer;
+        let context = &self.context;
+        let device = &context.device;
+        let queue = context.graphics_queue;
+        let command_buffer = context.draw_command_buffer;
         let swapchain_image = drawable.image;
 
         unsafe {
             // End rendering
-            self.cmd_end_rendering(command_buffer);
+            context.cmd_end_rendering(command_buffer);
 
             // Next, transition the color attachment into the present state
-            self.cmd_pipeline_barrier2(
+            context.cmd_pipeline_barrier2(
                 command_buffer,
                 &vk::DependencyInfo::default().image_memory_barriers(&[
                     vk::ImageMemoryBarrier2::default()
@@ -229,7 +228,7 @@ impl Renderer {
             device.end_command_buffer(command_buffer).unwrap();
 
             // Submit the work to the queue
-            self.queue_submit2(
+            context.queue_submit2(
                 queue,
                 &[vk::SubmitInfo2::default()
                     .command_buffer_infos(&[
@@ -253,84 +252,27 @@ impl Renderer {
     ) -> Pipeline {
         Pipeline::new::<R>(
             self.context.clone(),
+            &self.descriptors,
             self.swapchain.format,
             vertex_shader,
             fragment_shader,
         )
     }
 
-    #[cfg(not(any(target_os = "macos", target_os = "ios")))]
-    pub unsafe fn cmd_pipeline_barrier2(
-        &self,
-        command_buffer: vk::CommandBuffer,
-        dependency_info: &vk::DependencyInfo,
-    ) {
-        self.context
-            .device
-            .cmd_pipeline_barrier2(command_buffer, dependency_info);
-    }
-
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
-    pub unsafe fn cmd_pipeline_barrier2(
-        &self,
-        command_buffer: vk::CommandBuffer,
-        dependency_info: &vk::DependencyInfo,
-    ) {
-        self.sync2_pfn
-            .cmd_pipeline_barrier2(command_buffer, dependency_info);
-    }
-
-    #[cfg(not(any(target_os = "macos", target_os = "ios")))]
-    pub unsafe fn cmd_begin_rendering(
-        &self,
-        command_buffer: vk::CommandBuffer,
-        rendering_info: &vk::RenderingInfo,
-    ) {
-        self.context
-            .device
-            .cmd_begin_rendering(command_buffer, rendering_info);
-    }
-
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
-    pub unsafe fn cmd_begin_rendering(
-        &self,
-        command_buffer: vk::CommandBuffer,
-        rendering_info: &vk::RenderingInfo,
-    ) {
-        self.dynamic_rendering_pfn
-            .cmd_begin_rendering(command_buffer, rendering_info);
-    }
-
-    #[cfg(not(any(target_os = "macos", target_os = "ios")))]
-    pub unsafe fn cmd_end_rendering(&self, command_buffer: vk::CommandBuffer) {
-        self.context.device.cmd_end_rendering(command_buffer);
-    }
-
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
-    pub unsafe fn cmd_end_rendering(&self, command_buffer: vk::CommandBuffer) {
-        self.dynamic_rendering_pfn.cmd_end_rendering(command_buffer);
-    }
-
-    #[cfg(not(any(target_os = "macos", target_os = "ios")))]
-    pub unsafe fn queue_submit2(
-        &self,
-        queue: vk::Queue,
-        submits: &[vk::SubmitInfo2KHR],
-        fence: vk::Fence,
-    ) {
-        self.context
-            .device
-            .queue_submit2(queue, submits, fence)
-            .unwrap()
-    }
-
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
-    pub unsafe fn queue_submit2(
-        &self,
-        queue: vk::Queue,
-        submits: &[vk::SubmitInfo2KHR],
-        fence: vk::Fence,
-    ) {
-        self.sync2_pfn.queue_submit2(queue, submits, fence).unwrap()
+    pub fn create_image(
+        &mut self,
+        format: vk::Format,
+        extent: vk::Extent2D,
+        image_bytes: impl AsRef<[u8]>,
+        image_usage_flags: vk::ImageUsageFlags,
+    ) -> Image {
+        self.image_manager.create_image(
+            &mut self.allocator,
+            &mut self.descriptors,
+            format,
+            extent,
+            image_bytes,
+            image_usage_flags,
+        )
     }
 }

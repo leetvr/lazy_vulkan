@@ -1,8 +1,8 @@
 use std::{f32::consts::TAU, path::Path, time::Instant};
 
 use ash::vk;
-use glam::{Quat, Vec4};
-use lazy_vulkan::{BufferAllocation, Context, LazyVulkan, SubRenderer, TransferToken};
+use glam::{vec2, vec4, Quat};
+use lazy_vulkan::{BufferAllocation, Context, Image, LazyVulkan, SubRenderer, TransferToken};
 use winit::{
     application::ApplicationHandler,
     dpi::PhysicalSize,
@@ -16,11 +16,12 @@ use winit::{
 #[derive(Copy, Debug, Clone)]
 struct Vertex {
     position: glam::Vec4,
+    uv: glam::Vec2,
 }
 
 impl Vertex {
-    const fn new(position: glam::Vec4) -> Vertex {
-        Vertex { position }
+    const fn new(position: glam::Vec4, uv: glam::Vec2) -> Vertex {
+        Vertex { position, uv }
     }
 }
 
@@ -29,85 +30,91 @@ unsafe impl bytemuck::Pod for Vertex {}
 
 const CUBE_VERTICES: &[Vertex] = &[
     // Front face (+Z)
-    Vertex::new(glam::Vec4::new(-0.5, -0.5, 0.5, 1.0)),
-    Vertex::new(glam::Vec4::new(0.5, -0.5, 0.5, 1.0)),
-    Vertex::new(glam::Vec4::new(0.5, 0.5, 0.5, 1.0)),
-    Vertex::new(glam::Vec4::new(-0.5, -0.5, 0.5, 1.0)),
-    Vertex::new(glam::Vec4::new(0.5, 0.5, 0.5, 1.0)),
-    Vertex::new(glam::Vec4::new(-0.5, 0.5, 0.5, 1.0)),
+    Vertex::new(vec4(-0.5, -0.5, 0.5, 1.0), vec2(0.0, 1.0)),
+    Vertex::new(vec4(0.5, -0.5, 0.5, 1.0), vec2(1.0, 1.0)),
+    Vertex::new(vec4(0.5, 0.5, 0.5, 1.0), vec2(1.0, 0.0)),
+    Vertex::new(vec4(-0.5, -0.5, 0.5, 1.0), vec2(0.0, 1.0)),
+    Vertex::new(vec4(0.5, 0.5, 0.5, 1.0), vec2(1.0, 0.0)),
+    Vertex::new(vec4(-0.5, 0.5, 0.5, 1.0), vec2(0.0, 0.0)),
     // Back face (–Z)
-    Vertex::new(glam::Vec4::new(0.5, -0.5, -0.5, 1.0)),
-    Vertex::new(glam::Vec4::new(-0.5, -0.5, -0.5, 1.0)),
-    Vertex::new(glam::Vec4::new(-0.5, 0.5, -0.5, 1.0)),
-    Vertex::new(glam::Vec4::new(0.5, -0.5, -0.5, 1.0)),
-    Vertex::new(glam::Vec4::new(-0.5, 0.5, -0.5, 1.0)),
-    Vertex::new(glam::Vec4::new(0.5, 0.5, -0.5, 1.0)),
+    Vertex::new(vec4(0.5, -0.5, -0.5, 1.0), vec2(0.0, 1.0)),
+    Vertex::new(vec4(-0.5, -0.5, -0.5, 1.0), vec2(1.0, 1.0)),
+    Vertex::new(vec4(-0.5, 0.5, -0.5, 1.0), vec2(1.0, 0.0)),
+    Vertex::new(vec4(0.5, -0.5, -0.5, 1.0), vec2(0.0, 1.0)),
+    Vertex::new(vec4(-0.5, 0.5, -0.5, 1.0), vec2(1.0, 0.0)),
+    Vertex::new(vec4(0.5, 0.5, -0.5, 1.0), vec2(0.0, 0.0)),
     // Left face (–X)
-    Vertex::new(glam::Vec4::new(-0.5, -0.5, -0.5, 1.0)),
-    Vertex::new(glam::Vec4::new(-0.5, -0.5, 0.5, 1.0)),
-    Vertex::new(glam::Vec4::new(-0.5, 0.5, 0.5, 1.0)),
-    Vertex::new(glam::Vec4::new(-0.5, -0.5, -0.5, 1.0)),
-    Vertex::new(glam::Vec4::new(-0.5, 0.5, 0.5, 1.0)),
-    Vertex::new(glam::Vec4::new(-0.5, 0.5, -0.5, 1.0)),
+    Vertex::new(vec4(-0.5, -0.5, -0.5, 1.0), vec2(0.0, 1.0)),
+    Vertex::new(vec4(-0.5, -0.5, 0.5, 1.0), vec2(1.0, 1.0)),
+    Vertex::new(vec4(-0.5, 0.5, 0.5, 1.0), vec2(1.0, 0.0)),
+    Vertex::new(vec4(-0.5, -0.5, -0.5, 1.0), vec2(0.0, 1.0)),
+    Vertex::new(vec4(-0.5, 0.5, 0.5, 1.0), vec2(1.0, 0.0)),
+    Vertex::new(vec4(-0.5, 0.5, -0.5, 1.0), vec2(0.0, 0.0)),
     // Right face (+X)
-    Vertex::new(glam::Vec4::new(0.5, -0.5, 0.5, 1.0)),
-    Vertex::new(glam::Vec4::new(0.5, -0.5, -0.5, 1.0)),
-    Vertex::new(glam::Vec4::new(0.5, 0.5, -0.5, 1.0)),
-    Vertex::new(glam::Vec4::new(0.5, -0.5, 0.5, 1.0)),
-    Vertex::new(glam::Vec4::new(0.5, 0.5, -0.5, 1.0)),
-    Vertex::new(glam::Vec4::new(0.5, 0.5, 0.5, 1.0)),
+    Vertex::new(vec4(0.5, -0.5, 0.5, 1.0), vec2(0.0, 1.0)),
+    Vertex::new(vec4(0.5, -0.5, -0.5, 1.0), vec2(1.0, 1.0)),
+    Vertex::new(vec4(0.5, 0.5, -0.5, 1.0), vec2(1.0, 0.0)),
+    Vertex::new(vec4(0.5, -0.5, 0.5, 1.0), vec2(0.0, 1.0)),
+    Vertex::new(vec4(0.5, 0.5, -0.5, 1.0), vec2(1.0, 0.0)),
+    Vertex::new(vec4(0.5, 0.5, 0.5, 1.0), vec2(0.0, 0.0)),
     // Top face (+Y)
-    Vertex::new(glam::Vec4::new(-0.5, 0.5, 0.5, 1.0)),
-    Vertex::new(glam::Vec4::new(0.5, 0.5, 0.5, 1.0)),
-    Vertex::new(glam::Vec4::new(0.5, 0.5, -0.5, 1.0)),
-    Vertex::new(glam::Vec4::new(-0.5, 0.5, 0.5, 1.0)),
-    Vertex::new(glam::Vec4::new(0.5, 0.5, -0.5, 1.0)),
-    Vertex::new(glam::Vec4::new(-0.5, 0.5, -0.5, 1.0)),
+    Vertex::new(vec4(-0.5, 0.5, 0.5, 1.0), vec2(0.0, 1.0)),
+    Vertex::new(vec4(0.5, 0.5, 0.5, 1.0), vec2(1.0, 1.0)),
+    Vertex::new(vec4(0.5, 0.5, -0.5, 1.0), vec2(1.0, 0.0)),
+    Vertex::new(vec4(-0.5, 0.5, 0.5, 1.0), vec2(0.0, 1.0)),
+    Vertex::new(vec4(0.5, 0.5, -0.5, 1.0), vec2(1.0, 0.0)),
+    Vertex::new(vec4(-0.5, 0.5, -0.5, 1.0), vec2(0.0, 0.0)),
     // Bottom face (–Y)
-    Vertex::new(glam::Vec4::new(-0.5, -0.5, -0.5, 1.0)),
-    Vertex::new(glam::Vec4::new(0.5, -0.5, -0.5, 1.0)),
-    Vertex::new(glam::Vec4::new(0.5, -0.5, 0.5, 1.0)),
-    Vertex::new(glam::Vec4::new(-0.5, -0.5, -0.5, 1.0)),
-    Vertex::new(glam::Vec4::new(0.5, -0.5, 0.5, 1.0)),
-    Vertex::new(glam::Vec4::new(-0.5, -0.5, 0.5, 1.0)),
+    Vertex::new(vec4(-0.5, -0.5, -0.5, 1.0), vec2(0.0, 1.0)),
+    Vertex::new(vec4(0.5, -0.5, -0.5, 1.0), vec2(1.0, 1.0)),
+    Vertex::new(vec4(0.5, -0.5, 0.5, 1.0), vec2(1.0, 0.0)),
+    Vertex::new(vec4(-0.5, -0.5, -0.5, 1.0), vec2(0.0, 1.0)),
+    Vertex::new(vec4(0.5, -0.5, 0.5, 1.0), vec2(1.0, 0.0)),
+    Vertex::new(vec4(-0.5, -0.5, 0.5, 1.0), vec2(0.0, 0.0)),
 ];
 
 pub struct MeshRenderer {
     mvp: glam::Mat4,
     pipeline: lazy_vulkan::Pipeline,
-    colour: glam::Vec4,
     buffer: BufferAllocation<Vertex>,
     initial_upload: TransferToken,
     rotation: glam::Quat,
     position: glam::Vec3,
+    logo_image: Image,
 }
 
 impl MeshRenderer {
     pub fn new(renderer: &mut lazy_vulkan::Renderer) -> Self {
+        // Create our pipeline
         let pipeline = renderer.create_pipeline::<Registers>(
             Path::new("examples/shaders/mesh.vert.spv"),
-            Path::new("examples/shaders/colour.frag.spv"),
+            Path::new("examples/shaders/texture.frag.spv"),
         );
 
-        let mut buffer = renderer
-            .allocator
-            .allocate_buffer(10 * 1024 * 1024, vk::BufferUsageFlags::STORAGE_BUFFER);
-
-        let initial_upload = renderer
-            .allocator
-            .stage_transfer(&CUBE_VERTICES, &mut buffer);
+        // Allocate some resources
+        let allocator = &mut renderer.allocator;
+        let mut buffer =
+            allocator.allocate_buffer(10 * 1024 * 1024, vk::BufferUsageFlags::STORAGE_BUFFER);
+        let initial_upload = allocator.stage_buffer_transfer(&CUBE_VERTICES, &mut buffer);
+        let (image_bytes, extent) = decode_png(Path::new("examples/vulkan.png"));
+        let logo_image = renderer.create_image(
+            vk::Format::R8G8B8A8_SRGB,
+            extent,
+            image_bytes,
+            vk::ImageUsageFlags::SAMPLED,
+        );
 
         // Build up the perspective matrix
         let mvp = build_mvp(renderer.swapchain.extent);
 
         Self {
             pipeline,
-            colour: glam::Vec4::ONE,
             buffer,
             initial_upload,
             mvp,
             rotation: glam::Quat::IDENTITY,
             position: glam::Vec3::ZERO,
+            logo_image,
         }
     }
 }
@@ -115,14 +122,20 @@ impl MeshRenderer {
 impl SubRenderer for MeshRenderer {
     type State = RenderState;
     fn draw(&mut self, context: &Context, params: lazy_vulkan::DrawParams) {
+        // Make sure our resources are available before we use them
         if !self.initial_upload.is_complete() {
             return;
         }
 
-        self.begin_rendering(params.draw_command_buffer, context, &self.pipeline);
+        if !self.logo_image.transfer_complete.is_complete() {
+            return;
+        }
+
+        self.begin_rendering(context, &self.pipeline);
 
         let mvp =
             self.mvp * glam::Affine3A::from_rotation_translation(self.rotation, self.position);
+        let vertex_count = self.buffer.len() as u32;
 
         unsafe {
             self.pipeline.update_registers(
@@ -131,10 +144,9 @@ impl SubRenderer for MeshRenderer {
                 &Registers {
                     mvp,
                     vertex_buffer: self.buffer.device_address,
-                    colour: self.colour,
+                    texture_id: self.logo_image.id,
                 },
             );
-            let vertex_count = self.buffer.len() as u32;
             context
                 .device
                 .cmd_draw(params.draw_command_buffer, vertex_count, 1, 0, 0)
@@ -142,7 +154,6 @@ impl SubRenderer for MeshRenderer {
     }
 
     fn update_state(&mut self, state: &RenderState) {
-        self.colour = psychedelic_vec4(state.t);
         self.rotation = glam::Quat::from_rotation_y(state.t * 5.);
         self.position = glam::Vec3::Y * (((state.t * 2.0).sin()) * 0.5 + 0.5) * 2.0;
     }
@@ -161,24 +172,31 @@ pub struct RenderState {
 #[derive(Copy, Clone)]
 struct Registers {
     mvp: glam::Mat4,
-    colour: glam::Vec4,
     vertex_buffer: vk::DeviceAddress,
+    texture_id: u32,
 }
 
 unsafe impl bytemuck::Zeroable for Registers {}
 unsafe impl bytemuck::Pod for Registers {}
 
-// from chatGPT
-pub fn psychedelic_vec4(t: f32) -> Vec4 {
-    let time = t * 5.;
+fn decode_png(path: &Path) -> (Vec<u8>, vk::Extent2D) {
+    use std::fs::File;
+    let mut decoder = png::Decoder::new(File::open(path).unwrap());
+    decoder.set_transformations(png::Transformations::ALPHA);
+    let mut reader = decoder.read_info().unwrap();
+    // Allocate the output buffer.
+    let mut buf = vec![0; reader.output_buffer_size()];
+    // Read the next frame. An APNG might contain multiple frames.
+    let info = reader.next_frame(&mut buf).unwrap();
+    // Grab the bytes of the image.
+    let bytes = &buf[..info.buffer_size()];
 
-    let r = (time * 1.0 + 0.0).sin() * 0.5 + 0.5;
-    let g = (time * 1.3 + std::f32::consts::FRAC_PI_2).sin() * 0.5 + 0.5;
-    let b = (time * 1.6 + std::f32::consts::PI).sin() * 0.5 + 0.5;
+    let extent = vk::Extent2D {
+        width: info.width,
+        height: info.height,
+    };
 
-    let a = (time * 0.4).cos() * 0.5 + 0.5;
-
-    Vec4::new(r, g, b, a)
+    (bytes.to_vec(), extent)
 }
 
 fn build_mvp(extent: vk::Extent2D) -> glam::Mat4 {
@@ -202,7 +220,6 @@ fn build_mvp(extent: vk::Extent2D) -> glam::Mat4 {
 // ------------
 // BOILERPLATE
 // ------------
-//
 #[derive(Default)]
 struct App {
     state: Option<State>,
@@ -219,7 +236,7 @@ impl<'a> ApplicationHandler for App {
         let window = event_loop
             .create_window(
                 WindowAttributes::default()
-                    .with_title("Triangle Example")
+                    .with_title("Mesh Example")
                     .with_inner_size(PhysicalSize::new(1024, 768)),
             )
             .unwrap();

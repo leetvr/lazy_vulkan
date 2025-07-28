@@ -18,9 +18,7 @@ pub struct TriangleRenderer {
 
 impl TriangleRenderer {
     pub fn new(renderer: &lazy_vulkan::Renderer) -> Self {
-        let pipeline: lazy_vulkan::Pipeline = lazy_vulkan::Pipeline::new::<Registers>(
-            renderer.context.clone(),
-            renderer.swapchain.format,
+        let pipeline = renderer.create_pipeline::<Registers>(
             Path::new("examples/shaders/triangle.vert.spv"),
             Path::new("examples/shaders/colour.frag.spv"),
         );
@@ -35,7 +33,7 @@ impl TriangleRenderer {
 impl SubRenderer for TriangleRenderer {
     type State = RenderState;
     fn draw(&mut self, context: &Context, params: lazy_vulkan::DrawParams) {
-        self.begin_rendering(params.draw_command_buffer, context, &self.pipeline);
+        self.begin_rendering(context, &self.pipeline);
         unsafe {
             self.pipeline.update_registers(
                 params.draw_command_buffer,

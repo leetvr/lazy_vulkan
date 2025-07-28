@@ -10,6 +10,11 @@ pub struct Context {
     pub graphics_queue: vk::Queue,
     pub memory_properties: vk::PhysicalDeviceMemoryProperties,
     pub device_type: vk::PhysicalDeviceType,
+    pub device_properties: vk::PhysicalDeviceProperties,
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    pub dynamic_rendering_pfn: ash::khr::dynamic_rendering::Device,
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    pub sync2_pfn: ash::khr::synchronization2::Device,
 }
 
 impl Context {
@@ -46,6 +51,12 @@ impl Context {
         let physical_device_properties =
             unsafe { instance.get_physical_device_properties(physical_device) };
 
+        #[cfg(any(target_os = "macos", target_os = "ios"))]
+        let dynamic_rendering_pfn =
+            ash::khr::dynamic_rendering::Device::new(&core.instance, &device);
+        #[cfg(any(target_os = "macos", target_os = "ios"))]
+        let sync2_pfn = ash::khr::synchronization2::Device::new(&core.instance, &device);
+
         Self {
             device,
             command_pool,
@@ -53,6 +64,11 @@ impl Context {
             graphics_queue,
             memory_properties,
             device_type: physical_device_properties.device_type,
+            device_properties: physical_device_properties,
+            #[cfg(any(target_os = "macos", target_os = "ios"))]
+            dynamic_rendering_pfn,
+            #[cfg(any(target_os = "macos", target_os = "ios"))]
+            sync2_pfn,
         }
     }
 
@@ -73,6 +89,79 @@ impl Context {
         }
         None
     }
+
+    #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+    pub unsafe fn cmd_pipeline_barrier2(
+        &self,
+        command_buffer: vk::CommandBuffer,
+        dependency_info: &vk::DependencyInfo,
+    ) {
+        self.device
+            .cmd_pipeline_barrier2(command_buffer, dependency_info);
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    pub unsafe fn cmd_pipeline_barrier2(
+        &self,
+        command_buffer: vk::CommandBuffer,
+        dependency_info: &vk::DependencyInfo,
+    ) {
+        self.sync2_pfn
+            .cmd_pipeline_barrier2(command_buffer, dependency_info);
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+    pub unsafe fn cmd_begin_rendering(
+        &self,
+        command_buffer: vk::CommandBuffer,
+        rendering_info: &vk::RenderingInfo,
+    ) {
+        self.device
+            .cmd_begin_rendering(command_buffer, rendering_info);
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    pub unsafe fn cmd_begin_rendering(
+        &self,
+        command_buffer: vk::CommandBuffer,
+        rendering_info: &vk::RenderingInfo,
+    ) {
+        self.dynamic_rendering_pfn
+            .cmd_begin_rendering(command_buffer, rendering_info);
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+    pub unsafe fn cmd_end_rendering(&self, command_buffer: vk::CommandBuffer) {
+        self.context.device.cmd_end_rendering(command_buffer);
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    pub unsafe fn cmd_end_rendering(&self, command_buffer: vk::CommandBuffer) {
+        self.dynamic_rendering_pfn.cmd_end_rendering(command_buffer);
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+    pub unsafe fn queue_submit2(
+        &self,
+        queue: vk::Queue,
+        submits: &[vk::SubmitInfo2KHR],
+        fence: vk::Fence,
+    ) {
+        self.context
+            .device
+            .queue_submit2(queue, submits, fence)
+            .unwrap()
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    pub unsafe fn queue_submit2(
+        &self,
+        queue: vk::Queue,
+        submits: &[vk::SubmitInfo2KHR],
+        fence: vk::Fence,
+    ) {
+        self.sync2_pfn.queue_submit2(queue, submits, fence).unwrap()
+    }
 }
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
@@ -92,7 +181,11 @@ fn create_device(instance: &ash::Instance, physical_device: vk::PhysicalDevice) 
                 .queue_create_infos(&[vk::DeviceQueueCreateInfo::default()
                     .queue_family_index(0)
                     .queue_priorities(&[1.0])])
-                .enabled_features(&vk::PhysicalDeviceFeatures::default().fill_mode_non_solid(true))
+                .enabled_features(
+                    &vk::PhysicalDeviceFeatures::default()
+                        .fill_mode_non_solid(true)
+                        .sampler_anisotropy(true),
+                )
                 .push_next(
                     &mut vk::PhysicalDeviceDynamicRenderingFeatures::default()
                         .dynamic_rendering(true),
@@ -102,7 +195,13 @@ fn create_device(instance: &ash::Instance, physical_device: vk::PhysicalDevice) 
                         .synchronization2(true),
                 )
                 .push_next(
-                    &mut vk::PhysicalDeviceVulkan12Features::default().buffer_device_address(true),
+                    &mut vk::PhysicalDeviceVulkan12Features::default()
+                        .runtime_descriptor_array(true)
+                        .descriptor_indexing(true)
+                        .descriptor_binding_partially_bound(true)
+                        .descriptor_binding_sampled_image_update_after_bind(true)
+                        .shader_sampled_image_array_non_uniform_indexing(true)
+                        .buffer_device_address(true),
                 )
                 .push_next(
                     &mut vk::PhysicalDeviceVulkan11Features::default()
@@ -128,14 +227,24 @@ fn create_device(instance: &ash::Instance, physical_device: vk::PhysicalDevice) 
                 .queue_create_infos(&[vk::DeviceQueueCreateInfo::default()
                     .queue_family_index(0)
                     .queue_priorities(&[1.0])])
-                .enabled_features(&vk::PhysicalDeviceFeatures::default().fill_mode_non_solid(true))
+                .enabled_features(
+                    &vk::PhysicalDeviceFeatures::default()
+                        .fill_mode_non_solid(true)
+                        .shader_anisotropy(true),
+                )
                 .push_next(
                     &mut vk::PhysicalDeviceVulkan13Features::default()
                         .dynamic_rendering(true)
                         .synchronization2(true),
                 )
                 .push_next(
-                    &mut vk::PhysicalDeviceVulkan12Features::default().buffer_device_address(true),
+                    &mut vk::PhysicalDeviceVulkan12Features::default()
+                        .runtime_descriptor_array(true)
+                        .descriptor_indexing(true)
+                        .descriptor_binding_partially_bound(true)
+                        .descriptor_binding_sampled_image_update_after_bind(true)
+                        .shader_sampled_image_array_non_uniform_indexing(true)
+                        .buffer_device_address(true),
                 )
                 .push_next(
                     &mut vk::PhysicalDeviceVulkan11Features::default()

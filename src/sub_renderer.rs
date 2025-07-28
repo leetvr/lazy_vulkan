@@ -11,15 +11,11 @@ pub trait SubRenderer {
 
     /// Convenience function to Generally Do the right thing. Ensure that:
     ///
-    /// - [`draw command buffer`] is in the RECORDING state
+    /// - draw command buffer is in the RECORDING state
     /// - no other rendering is in progress
-    fn begin_rendering(
-        &self,
-        draw_command_buffer: vk::CommandBuffer,
-        context: &Context,
-        pipeline: &Pipeline,
-    ) {
+    fn begin_rendering(&self, context: &Context, pipeline: &Pipeline) {
         let device = &context.device;
+        let draw_command_buffer = context.draw_command_buffer;
 
         unsafe {
             // Bind the pipeline
@@ -27,6 +23,14 @@ pub trait SubRenderer {
                 draw_command_buffer,
                 vk::PipelineBindPoint::GRAPHICS,
                 pipeline.handle,
+            );
+            device.cmd_bind_descriptor_sets(
+                draw_command_buffer,
+                vk::PipelineBindPoint::GRAPHICS,
+                pipeline.layout,
+                0,
+                &[pipeline.descriptor_set],
+                &[],
             );
         }
     }
