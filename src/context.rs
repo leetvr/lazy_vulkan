@@ -132,7 +132,7 @@ impl Context {
 
     #[cfg(not(any(target_os = "macos", target_os = "ios")))]
     pub unsafe fn cmd_end_rendering(&self, command_buffer: vk::CommandBuffer) {
-        self.context.device.cmd_end_rendering(command_buffer);
+        self.device.cmd_end_rendering(command_buffer);
     }
 
     #[cfg(any(target_os = "macos", target_os = "ios"))]
@@ -147,10 +147,7 @@ impl Context {
         submits: &[vk::SubmitInfo2KHR],
         fence: vk::Fence,
     ) {
-        self.context
-            .device
-            .queue_submit2(queue, submits, fence)
-            .unwrap()
+        self.device.queue_submit2(queue, submits, fence).unwrap()
     }
 
     #[cfg(any(target_os = "macos", target_os = "ios"))]
@@ -230,7 +227,7 @@ fn create_device(instance: &ash::Instance, physical_device: vk::PhysicalDevice) 
                 .enabled_features(
                     &vk::PhysicalDeviceFeatures::default()
                         .fill_mode_non_solid(true)
-                        .shader_anisotropy(true),
+                        .sampler_anisotropy(true),
                 )
                 .push_next(
                     &mut vk::PhysicalDeviceVulkan13Features::default()

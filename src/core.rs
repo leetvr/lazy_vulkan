@@ -31,7 +31,7 @@ impl Core {
         #[cfg(not(any(target_os = "macos", target_os = "ios")))]
         {
             version = vk::API_VERSION_1_3;
-            create_flags = vk::InstanceCreateFlags::default();
+            instance_create_flags = vk::InstanceCreateFlags::default();
         }
 
         let instance = unsafe {
