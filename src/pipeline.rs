@@ -2,6 +2,8 @@ use std::{path::Path, sync::Arc};
 
 use ash::vk;
 
+use crate::descriptors::Descriptors;
+
 use super::{context::Context, depth_buffer::DEPTH_FORMAT};
 
 #[derive(Clone)]
@@ -10,12 +12,15 @@ pub struct Pipeline {
     pub layout: vk::PipelineLayout,
     #[allow(unused)]
     pub context: Arc<Context>,
+    // Avoids having to pass &Descriptors around at draw time
+    pub descriptor_set: vk::DescriptorSet,
 }
 
 impl Pipeline {
     // TODO: Watch shaders!
-    pub fn new<Registers>(
+    pub(crate) fn new<Registers>(
         context: Arc<Context>,
+        descriptors: &Descriptors,
         format: vk::Format,
         vertex_shader: impl AsRef<Path>,
         fragment_shader: impl AsRef<Path>,
@@ -24,11 +29,11 @@ impl Pipeline {
 
         let layout = unsafe {
             device.create_pipeline_layout(
-                &vk::PipelineLayoutCreateInfo::default().push_constant_ranges(&[
-                    vk::PushConstantRange::default()
+                &vk::PipelineLayoutCreateInfo::default()
+                    .set_layouts(&[descriptors.layout])
+                    .push_constant_ranges(&[vk::PushConstantRange::default()
                         .size(std::mem::size_of::<Registers>() as u32)
-                        .stage_flags(vk::ShaderStageFlags::ALL_GRAPHICS),
-                ]),
+                        .stage_flags(vk::ShaderStageFlags::ALL_GRAPHICS)]),
                 None,
             )
         }
@@ -106,6 +111,7 @@ impl Pipeline {
             context,
             layout,
             handle,
+            descriptor_set: descriptors.set,
         }
     }
 

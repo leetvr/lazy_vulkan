@@ -2,6 +2,7 @@ pub use allocator::{Allocator, BufferAllocation, TransferToken};
 pub use ash;
 pub use context::Context;
 pub use draw_params::DrawParams;
+pub use image_manager::{Image, ImageManager};
 pub use pipeline::Pipeline;
 pub use renderer::Renderer;
 pub use sub_renderer::SubRenderer;
@@ -16,7 +17,9 @@ mod allocator;
 mod context;
 mod core;
 mod depth_buffer;
+mod descriptors;
 mod draw_params;
+mod image_manager;
 mod pipeline;
 mod renderer;
 mod sub_renderer;
@@ -36,7 +39,7 @@ impl LazyVulkan {
         let core = Core::from_window(&window);
         let context = Arc::new(Context::new(&core));
         let swapchain = Swapchain::new(&context.device, &core, &window, vk::SwapchainKHR::null());
-        let renderer = Renderer::new(&core, context.clone(), swapchain);
+        let renderer = Renderer::new(context.clone(), swapchain);
 
         LazyVulkan {
             core,
@@ -59,7 +62,7 @@ impl LazyVulkan {
     }
 }
 
-const FULL_IMAGE: vk::ImageSubresourceRange = vk::ImageSubresourceRange {
+pub const FULL_IMAGE: vk::ImageSubresourceRange = vk::ImageSubresourceRange {
     aspect_mask: vk::ImageAspectFlags::COLOR,
     base_mip_level: 0,
     level_count: vk::REMAINING_MIP_LEVELS,

@@ -11,7 +11,7 @@ pub struct Swapchain {
     pub extent: vk::Extent2D,
     pub format: vk::Format,
     pub needs_update: bool,
-    image_available: vk::Semaphore,
+    image_available_semaphores: SemaphoreRingBuffer,
     capabilities: vk::SurfaceCapabilitiesKHR,
     rendering_complete_semaphores: [vk::Semaphore; 3],
 }
@@ -68,13 +68,12 @@ impl Swapchain {
             &swapchain_fn,
         );
 
-        let image_available =
-            unsafe { device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None) }.unwrap();
+        let image_available_semaphores = SemaphoreRingBuffer::new(device);
 
-        let rendering_complete_semaphores = [unsafe {
-            device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None)
-        }
-        .unwrap(); 3];
+        let rendering_complete_semaphores = std::array::from_fn(|_| {
+            unsafe { device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None) }.unwrap()
+        });
+
         Self {
             surface_handle,
             surface_fn,
@@ -85,18 +84,20 @@ impl Swapchain {
             extent,
             format,
             needs_update: false,
-            image_available,
+            image_available_semaphores,
             capabilities,
             rendering_complete_semaphores,
         }
     }
 
     pub fn get_drawable(&mut self) -> Option<Drawable> {
+        let image_available;
         let (index, suboptimal) = match unsafe {
+            image_available = self.image_available_semaphores.next();
             self.swapchain_fn.acquire_next_image(
                 self.swapchain_handle,
                 u64::MAX,
-                self.image_available,
+                image_available,
                 vk::Fence::null(),
             )
         } {
@@ -115,7 +116,7 @@ impl Swapchain {
         Some(Drawable {
             image: self.images[index as usize],
             view: self.image_views[index as usize],
-            image_available: self.image_available,
+            image_available,
             index,
             extent: self.extent,
             rendering_complete: self.rendering_complete_semaphores[index as usize],
@@ -234,4 +235,28 @@ pub struct Drawable {
     pub rendering_complete: vk::Semaphore,
     pub index: u32,
     pub extent: vk::Extent2D,
+}
+
+struct SemaphoreRingBuffer {
+    index: usize,
+    semaphores: [vk::Semaphore; 3],
+}
+
+impl SemaphoreRingBuffer {
+    pub fn new(device: &ash::Device) -> SemaphoreRingBuffer {
+        // good
+        let semaphores = std::array::from_fn(|_| {
+            unsafe { device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None) }.unwrap()
+        });
+
+        SemaphoreRingBuffer {
+            index: 0,
+            semaphores,
+        }
+    }
+
+    pub fn next(&mut self) -> vk::Semaphore {
+        self.index = (self.index + 1) % 3;
+        self.semaphores[self.index]
+    }
 }

@@ -1,5 +1,7 @@
-mod backend;
-use backend::AllocatorBackend;
+mod device_buffer;
+mod staging_buffer;
+use device_buffer::DeviceBuffer;
+use staging_buffer::StagingBuffer;
 use std::{
     fmt::Debug,
     marker::PhantomData,
@@ -22,14 +24,14 @@ pub struct Allocator {
     #[allow(unused)]
     pub pending_frees: Vec<PendingFree>,
     offset_allocator: offset_allocator::Allocator,
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
-    pub sync2_pfn: ash::khr::synchronization2::Device,
-    backend: AllocatorBackend,
+    backend: DeviceBuffer,
+    staging_buffer: StagingBuffer,
 }
 
 impl Allocator {
-    pub fn new(context: Arc<Context>, sync2_pfn: ash::khr::synchronization2::Device) -> Self {
-        let backend = AllocatorBackend::new(context.clone());
+    pub fn new(context: Arc<Context>) -> Self {
+        let backend = DeviceBuffer::new(context.clone());
+        let staging_buffer = StagingBuffer::new(&context);
         let offset_allocator = offset_allocator::Allocator::new(GLOBAL_MEMORY_SIZE as u32);
 
         Self {
@@ -38,8 +40,7 @@ impl Allocator {
             offset_allocator,
             pending_frees: Default::default(),
             pending_transfers: Default::default(),
-            #[cfg(any(target_os = "macos", target_os = "ios"))]
-            sync2_pfn,
+            staging_buffer,
         }
     }
 
@@ -91,19 +92,59 @@ impl Allocator {
         }
     }
 
-    pub fn stage_transfer<T: bytemuck::Pod + Debug>(
+    pub fn allocate_image(
+        &mut self,
+        data: &[u8],
+        extent: vk::Extent2D,
+        image: vk::Image,
+    ) -> TransferToken {
+        let device = &self.context.device;
+        let memory_requirements = unsafe { device.get_image_memory_requirements(image) };
+        let size = memory_requirements.size;
+
+        // Allocate an offset into our device local memory
+        let global_offset = self
+            .offset_allocator
+            .allocate(size as u32)
+            .expect("Unable to allocate memory. This should be impossible!");
+
+        // Bind the image to the memory at this offset
+        unsafe {
+            device.bind_image_memory(
+                image,
+                self.backend.device_memory(),
+                global_offset.offset as _,
+            )
+        }
+        .unwrap();
+
+        // Stage the transfer
+        let (ours, theirs) = TransferToken::create_pair();
+        let staging_buffer_offset = self.staging_buffer.stage(data);
+        self.pending_transfers.push(PendingTransfer {
+            destination: TransferDestination::Image(image, extent),
+            transfer_size: data.len() as _,
+            transfer_token: ours,
+            staging_buffer_offset,
+            global_offset,
+        });
+
+        theirs
+    }
+
+    pub fn stage_buffer_transfer<T: bytemuck::Pod + Debug>(
         &mut self,
         data: &[T],
         allocation: &mut BufferAllocation<T>,
     ) -> TransferToken {
         let bytes = bytemuck::cast_slice(data);
-        let staging_buffer_offset = self.backend.stage_transfer(bytes);
+        let staging_buffer_offset = self.staging_buffer.stage(bytes);
         allocation.len += data.len();
 
         let (ours, theirs) = TransferToken::create_pair();
 
         self.pending_transfers.push(PendingTransfer {
-            destination: allocation.handle,
+            destination: TransferDestination::Buffer(allocation.handle),
             staging_buffer_offset,
             transfer_size: bytes.len() as _,
             global_offset: allocation.global_offset,
@@ -114,14 +155,11 @@ impl Allocator {
     }
 
     pub fn execute_transfers(&mut self) {
-        let mut barriers = vec![];
-
-        for pending_transfer in self.pending_transfers.drain(..) {
-            self.backend
-                .execute_transfer(pending_transfer, &mut barriers);
-        }
-
-        self.backend.transfers_complete(&barriers);
+        self.backend.execute_transfers(
+            &self.context,
+            std::mem::take(&mut self.pending_transfers),
+            &mut self.staging_buffer,
+        );
     }
 
     #[allow(unused)]
@@ -155,11 +193,16 @@ impl TransferToken {
 }
 
 pub struct PendingTransfer {
-    destination: vk::Buffer,
+    destination: TransferDestination,
     staging_buffer_offset: usize,
     transfer_size: vk::DeviceSize,
     global_offset: offset_allocator::Allocation, // offset into the global memory
     transfer_token: TransferToken,
+}
+
+enum TransferDestination {
+    Buffer(vk::Buffer),
+    Image(vk::Image, vk::Extent2D),
 }
 
 pub struct PendingFree;
