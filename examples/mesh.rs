@@ -94,7 +94,7 @@ impl MeshRenderer {
         let allocator = &mut renderer.allocator;
         let mut buffer =
             allocator.allocate_buffer(10 * 1024 * 1024, vk::BufferUsageFlags::STORAGE_BUFFER);
-        let initial_upload = allocator.stage_buffer_transfer(&CUBE_VERTICES, &mut buffer);
+        let initial_upload = allocator.append_to_buffer(&CUBE_VERTICES, &mut buffer);
         let (image_bytes, extent) = decode_png(Path::new("examples/vulkan.png"));
         let logo_image = renderer.create_image(
             vk::Format::R8G8B8A8_SRGB,
@@ -116,7 +116,7 @@ impl MeshRenderer {
 
 impl SubRenderer for MeshRenderer {
     type State = RenderState;
-    fn draw(&mut self, context: &Context, params: lazy_vulkan::DrawParams) {
+    fn draw(&mut self, state: &Self::State, context: &Context, params: lazy_vulkan::DrawParams) {
         // Make sure our resources are available before we use them
         if !self.initial_upload.is_complete() {
             return;
@@ -125,6 +125,9 @@ impl SubRenderer for MeshRenderer {
         if !self.logo_image.transfer_complete.is_complete() {
             return;
         }
+
+        self.rotation = glam::Quat::from_rotation_y(state.t * 5.);
+        self.position = glam::Vec3::Y * (((state.t * 2.0).sin()) * 0.5 + 0.5) * 2.0;
 
         self.begin_rendering(context, &self.pipeline);
 
@@ -148,12 +151,7 @@ impl SubRenderer for MeshRenderer {
         }
     }
 
-    fn update_state(&mut self, state: &RenderState) {
-        self.rotation = glam::Quat::from_rotation_y(state.t * 5.);
-        self.position = glam::Vec3::Y * (((state.t * 2.0).sin()) * 0.5 + 0.5) * 2.0;
-    }
-
-    fn stage_transfers(&mut self, _allocator: &mut lazy_vulkan::Allocator) {
+    fn stage_transfers(&mut self, _state: &Self::State, _allocator: &mut lazy_vulkan::Allocator) {
         // no-op
     }
 }
@@ -222,6 +220,7 @@ struct App {
 
 struct State {
     lazy_vulkan: LazyVulkan,
+    window: winit::window::Window,
     sub_renderers: Vec<Box<dyn SubRenderer<State = RenderState>>>,
     render_state: RenderState,
 }
@@ -236,11 +235,12 @@ impl<'a> ApplicationHandler for App {
             )
             .unwrap();
 
-        let mut lazy_vulkan = LazyVulkan::from_window(window);
+        let mut lazy_vulkan = LazyVulkan::from_window(&window);
         let sub_renderer = MeshRenderer::new(&mut lazy_vulkan.renderer);
 
         self.state = Some(State {
             lazy_vulkan,
+            window,
             sub_renderers: vec![Box::new(sub_renderer)],
             render_state: RenderState {
                 t: 0.0,
@@ -289,7 +289,7 @@ impl<'a> ApplicationHandler for App {
         let Some(state) = self.state.as_mut() else {
             return;
         };
-        state.lazy_vulkan.window.request_redraw();
+        state.window.request_redraw();
     }
 }
 

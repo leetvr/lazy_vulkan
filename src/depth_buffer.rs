@@ -11,9 +11,8 @@ pub struct DepthBuffer {
 }
 
 impl DepthBuffer {
-    pub(crate) fn new(context: &Context, swapchain: &Swapchain) -> Self {
+    pub(crate) fn new(context: &Context, extent: vk::Extent2D) -> Self {
         let device = &context.device;
-        let extent = swapchain.extent;
 
         let image = unsafe {
             device.create_image(
@@ -86,7 +85,7 @@ impl DepthBuffer {
         unsafe { context.device.device_wait_idle().unwrap() };
 
         unsafe { self.destroy(context) };
-        *self = DepthBuffer::new(context, swapchain)
+        *self = DepthBuffer::new(context, swapchain.extent)
     }
 
     unsafe fn destroy(&self, context: &Context) {

@@ -29,36 +29,42 @@ pub struct LazyVulkan {
     #[allow(unused)]
     core: Core,
     #[allow(unused)]
-    context: Arc<Context>,
+    pub context: Arc<Context>,
     pub renderer: Renderer,
-    pub window: winit::window::Window,
 }
 
 impl LazyVulkan {
-    pub fn from_window(window: winit::window::Window) -> Self {
-        let core = Core::from_window(&window);
+    pub fn from_window(window: &winit::window::Window) -> Self {
+        let core = Core::from_window(window);
         let context = Arc::new(Context::new(&core));
-        let swapchain = Swapchain::new(&context.device, &core, &window, vk::SwapchainKHR::null());
-        let renderer = Renderer::new(context.clone(), swapchain);
+        let swapchain = Swapchain::new(&context.device, &core, window, vk::SwapchainKHR::null());
+        let renderer = Renderer::from_swapchain(context.clone(), swapchain);
 
         LazyVulkan {
             core,
             context,
             renderer,
-            window,
+        }
+    }
+
+    pub fn headless() -> Self {
+        let core = Core::headless();
+        let context = Arc::new(Context::new(&core));
+        let renderer = Renderer::headless(context.clone());
+
+        LazyVulkan {
+            core,
+            context,
+            renderer,
         }
     }
 
     pub fn draw<S>(&mut self, state: &S, sub_renderers: &mut [Box<dyn SubRenderer<State = S>>]) {
-        for sub_renderer in &mut *sub_renderers {
-            sub_renderer.update_state(state);
-        }
-        self.renderer.draw(sub_renderers);
+        self.renderer.draw(state, sub_renderers);
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {
-        self.renderer.swapchain.extent = vk::Extent2D { width, height };
-        self.renderer.swapchain.needs_update = true;
+        self.renderer.resize(vk::Extent2D { width, height });
     }
 }
 

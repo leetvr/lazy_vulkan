@@ -159,6 +159,7 @@ impl DiscreteDeviceBuffer {
         PendingTransfer {
             destination,
             staging_buffer_offset,
+            allocation_offset,
             transfer_size,
             transfer_token,
             ..
@@ -181,7 +182,7 @@ impl DiscreteDeviceBuffer {
                 buffer,
                 &[vk::BufferCopy::default()
                     .src_offset(staging_buffer_offset as _)
-                    .dst_offset(0)
+                    .dst_offset(allocation_offset as _)
                     .size(transfer_size)],
             );
         }
@@ -266,6 +267,7 @@ impl IntegratedDeviceBuffer {
     pub fn buffer_transfer(
         &mut self,
         PendingTransfer {
+            allocation_offset,
             staging_buffer_offset,
             transfer_size,
             global_offset,
@@ -274,11 +276,17 @@ impl IntegratedDeviceBuffer {
         }: PendingTransfer,
         staging_buffer: &mut StagingBuffer,
     ) {
-        // We get the source pointer by taking the base address of the **staging buffer** and adding the offset
+        // We get the source pointer by taking the base address of the **staging buffer** and
+        // adding the offset
         let source = unsafe { staging_buffer.ptr.add(staging_buffer_offset).as_ptr() };
 
-        // We get the destination pointer by taking the base address of the **global buffer** and adding the allocated offset
-        let destination = unsafe { self.global_ptr.add(global_offset.offset as usize).as_ptr() };
+        // We get the destination pointer by taking the base address of the **global buffer**,
+        // and then finally adding the offset within the allocation itself
+        let destination = unsafe {
+            self.global_ptr
+                .add(global_offset.offset as usize + allocation_offset)
+                .as_ptr()
+        };
 
         unsafe {
             std::ptr::copy_nonoverlapping(source, destination, transfer_size as usize);

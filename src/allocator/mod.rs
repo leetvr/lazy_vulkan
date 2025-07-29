@@ -127,19 +127,19 @@ impl Allocator {
             transfer_token: ours,
             staging_buffer_offset,
             global_offset,
+            allocation_offset: 0,
         });
 
         theirs
     }
 
-    pub fn stage_buffer_transfer<T: bytemuck::Pod + Debug>(
+    pub fn append_to_buffer<T: bytemuck::Pod + Debug>(
         &mut self,
         data: &[T],
         allocation: &mut BufferAllocation<T>,
     ) -> TransferToken {
         let bytes = bytemuck::cast_slice(data);
         let staging_buffer_offset = self.staging_buffer.stage(bytes);
-        allocation.len += data.len();
 
         let (ours, theirs) = TransferToken::create_pair();
 
@@ -149,7 +149,10 @@ impl Allocator {
             transfer_size: bytes.len() as _,
             global_offset: allocation.global_offset,
             transfer_token: ours,
+            allocation_offset: allocation.len(),
         });
+
+        allocation.len += data.len();
 
         theirs
     }
@@ -194,9 +197,10 @@ impl TransferToken {
 
 pub struct PendingTransfer {
     destination: TransferDestination,
-    staging_buffer_offset: usize,
-    transfer_size: vk::DeviceSize,
+    staging_buffer_offset: usize, // offset within the staging buffer
     global_offset: offset_allocator::Allocation, // offset into the global memory
+    allocation_offset: usize,     // offset within the allocation
+    transfer_size: vk::DeviceSize,
     transfer_token: TransferToken,
 }
 
