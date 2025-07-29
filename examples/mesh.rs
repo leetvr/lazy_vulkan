@@ -74,7 +74,6 @@ const CUBE_VERTICES: &[Vertex] = &[
 ];
 
 pub struct MeshRenderer {
-    mvp: glam::Mat4,
     pipeline: lazy_vulkan::Pipeline,
     buffer: BufferAllocation<Vertex>,
     initial_upload: TransferToken,
@@ -104,14 +103,10 @@ impl MeshRenderer {
             vk::ImageUsageFlags::SAMPLED,
         );
 
-        // Build up the perspective matrix
-        let mvp = build_mvp(renderer.swapchain.extent);
-
         Self {
             pipeline,
             buffer,
             initial_upload,
-            mvp,
             rotation: glam::Quat::IDENTITY,
             position: glam::Vec3::ZERO,
             logo_image,
@@ -133,8 +128,8 @@ impl SubRenderer for MeshRenderer {
 
         self.begin_rendering(context, &self.pipeline);
 
-        let mvp =
-            self.mvp * glam::Affine3A::from_rotation_translation(self.rotation, self.position);
+        let mvp = build_mvp(params.drawable.extent)
+            * glam::Affine3A::from_rotation_translation(self.rotation, self.position);
         let vertex_count = self.buffer.len() as u32;
 
         unsafe {

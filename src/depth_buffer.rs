@@ -6,13 +6,15 @@ use super::{context::Context, swapchain::Swapchain};
 pub struct DepthBuffer {
     pub image: vk::Image,
     pub view: vk::ImageView,
-    #[allow(unused)]
     pub memory: vk::DeviceMemory,
+    pub extent: vk::Extent2D,
 }
 
 impl DepthBuffer {
     pub(crate) fn new(context: &Context, swapchain: &Swapchain) -> Self {
         let device = &context.device;
+        let extent = swapchain.extent;
+
         let image = unsafe {
             device.create_image(
                 &vk::ImageCreateInfo::default()
@@ -24,7 +26,7 @@ impl DepthBuffer {
                     .usage(vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT)
                     .sharing_mode(vk::SharingMode::EXCLUSIVE)
                     .initial_layout(vk::ImageLayout::UNDEFINED)
-                    .extent(swapchain.extent.into())
+                    .extent(extent.into())
                     .format(DEPTH_FORMAT),
                 None,
             )
@@ -71,7 +73,28 @@ impl DepthBuffer {
             image,
             view,
             memory,
+            extent,
         }
+    }
+
+    pub fn validate(&mut self, context: &Context, swapchain: &Swapchain) {
+        if swapchain.extent == self.extent {
+            // Sizes are identical, nothing to do.
+            return;
+        }
+
+        unsafe { context.device.device_wait_idle().unwrap() };
+
+        unsafe { self.destroy(context) };
+        *self = DepthBuffer::new(context, swapchain)
+    }
+
+    unsafe fn destroy(&self, context: &Context) {
+        let device = &context.device;
+
+        device.destroy_image_view(self.view, None);
+        device.destroy_image(self.image, None);
+        device.free_memory(self.memory, None);
     }
 }
 

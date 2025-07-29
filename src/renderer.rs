@@ -98,6 +98,9 @@ impl Renderer {
             self.swapchain.resize(&self.context.device);
         };
 
+        // Recreate the depth buffer if the swapchain was resized
+        self.depth_buffer.validate(&self.context, &self.swapchain);
+
         // Get a `Drawable` from the swapchain
         let render_area = drawable.extent;
 
