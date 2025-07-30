@@ -36,6 +36,15 @@ impl DeviceBuffer {
         }
     }
 
+    pub fn get_device_address(&self, offset: offset_allocator::Allocation) -> vk::DeviceAddress {
+        let base_address = match self {
+            DeviceBuffer::Discrete(discrete_allocator) => discrete_allocator.slab_address,
+            DeviceBuffer::Integrated(integrated_allocator) => integrated_allocator.slab_address,
+        };
+
+        base_address + offset.offset as vk::DeviceAddress
+    }
+
     pub fn execute_transfers(
         &mut self,
         context: &Context,
@@ -44,7 +53,7 @@ impl DeviceBuffer {
     ) {
         for pending in pending_transfers.drain(..) {
             match pending.destination {
-                TransferDestination::Buffer(_) => {
+                TransferDestination::Slab | TransferDestination::Buffer(_) => {
                     match self {
                         DeviceBuffer::Discrete(discrete_allocator) => {
                             discrete_allocator.buffer_transfer(context, pending, staging_buffer)
@@ -115,6 +124,8 @@ impl DeviceBuffer {
 
 pub struct DiscreteDeviceBuffer {
     device_memory: vk::DeviceMemory,
+    slab_buffer: vk::Buffer,
+    slab_address: vk::DeviceAddress,
 }
 
 impl DiscreteDeviceBuffer {
@@ -150,7 +161,13 @@ impl DiscreteDeviceBuffer {
         }
         .unwrap();
 
-        Self { device_memory }
+        let (slab_buffer, slab_address) = create_slab_buffer(device);
+
+        Self {
+            device_memory,
+            slab_buffer,
+            slab_address,
+        }
     }
 
     pub fn buffer_transfer(
@@ -159,6 +176,7 @@ impl DiscreteDeviceBuffer {
         PendingTransfer {
             destination,
             staging_buffer_offset,
+            allocation_offset,
             transfer_size,
             transfer_token,
             ..
@@ -181,7 +199,7 @@ impl DiscreteDeviceBuffer {
                 buffer,
                 &[vk::BufferCopy::default()
                     .src_offset(staging_buffer_offset as _)
-                    .dst_offset(0)
+                    .dst_offset(allocation_offset as _)
                     .size(transfer_size)],
             );
         }
@@ -206,9 +224,34 @@ impl DiscreteDeviceBuffer {
     }
 }
 
+fn create_slab_buffer(device: &ash::Device) -> (vk::Buffer, u64) {
+    // Create the buffer
+    let slab_buffer = unsafe {
+        device.create_buffer(
+            &vk::BufferCreateInfo::default()
+                .size(GLOBAL_MEMORY_SIZE)
+                .usage(
+                    vk::BufferUsageFlags::STORAGE_BUFFER
+                        | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
+                        | vk::BufferUsageFlags::TRANSFER_DST,
+                ),
+            None,
+        )
+    }
+    .unwrap();
+
+    let slab_address = unsafe {
+        device
+            .get_buffer_device_address(&vk::BufferDeviceAddressInfo::default().buffer(slab_buffer))
+    };
+    (slab_buffer, slab_address)
+}
+
 pub struct IntegratedDeviceBuffer {
     global_memory: vk::DeviceMemory,
     global_ptr: NonNull<u8>,
+    slab_buffer: vk::Buffer,
+    slab_address: vk::DeviceAddress,
 }
 
 impl IntegratedDeviceBuffer {
@@ -257,15 +300,20 @@ impl IntegratedDeviceBuffer {
             )
         };
 
+        let (slab_buffer, slab_address) = create_slab_buffer(device);
+
         IntegratedDeviceBuffer {
             global_memory,
             global_ptr,
+            slab_buffer,
+            slab_address,
         }
     }
 
     pub fn buffer_transfer(
         &mut self,
         PendingTransfer {
+            allocation_offset,
             staging_buffer_offset,
             transfer_size,
             global_offset,
@@ -274,11 +322,17 @@ impl IntegratedDeviceBuffer {
         }: PendingTransfer,
         staging_buffer: &mut StagingBuffer,
     ) {
-        // We get the source pointer by taking the base address of the **staging buffer** and adding the offset
+        // We get the source pointer by taking the base address of the **staging buffer** and
+        // adding the offset
         let source = unsafe { staging_buffer.ptr.add(staging_buffer_offset).as_ptr() };
 
-        // We get the destination pointer by taking the base address of the **global buffer** and adding the allocated offset
-        let destination = unsafe { self.global_ptr.add(global_offset.offset as usize).as_ptr() };
+        // We get the destination pointer by taking the base address of the **global buffer**,
+        // and then finally adding the offset within the allocation itself
+        let destination = unsafe {
+            self.global_ptr
+                .add(global_offset.offset as usize + allocation_offset)
+                .as_ptr()
+        };
 
         unsafe {
             std::ptr::copy_nonoverlapping(source, destination, transfer_size as usize);

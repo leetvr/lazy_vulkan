@@ -32,8 +32,9 @@ impl TriangleRenderer {
 
 impl SubRenderer for TriangleRenderer {
     type State = RenderState;
-    fn draw(&mut self, context: &Context, params: lazy_vulkan::DrawParams) {
+    fn draw(&mut self, state: &Self::State, context: &Context, params: lazy_vulkan::DrawParams) {
         self.begin_rendering(context, &self.pipeline);
+        self.colour = psychedelic_vec4(state.t);
         unsafe {
             self.pipeline.update_registers(
                 params.draw_command_buffer,
@@ -48,11 +49,7 @@ impl SubRenderer for TriangleRenderer {
         }
     }
 
-    fn update_state(&mut self, state: &RenderState) {
-        self.colour = psychedelic_vec4(state.t, state.last_render_time.elapsed().as_secs_f32())
-    }
-
-    fn stage_transfers(&mut self, _allocator: &mut lazy_vulkan::Allocator) {
+    fn stage_transfers(&mut self, _state: &Self::State, _allocator: &mut lazy_vulkan::Allocator) {
         // no-op
     }
 }
@@ -80,6 +77,7 @@ struct State {
     lazy_vulkan: LazyVulkan,
     sub_renderers: Vec<Box<dyn SubRenderer<State = RenderState>>>,
     render_state: RenderState,
+    window: winit::window::Window,
 }
 
 // ------------
@@ -96,11 +94,12 @@ impl<'a> ApplicationHandler for App {
             )
             .unwrap();
 
-        let lazy_vulkan = LazyVulkan::from_window(window);
+        let lazy_vulkan = LazyVulkan::from_window(&window);
         let sub_renderer = TriangleRenderer::new(&lazy_vulkan.renderer);
 
         self.state = Some(State {
             lazy_vulkan,
+            window,
             sub_renderers: vec![Box::new(sub_renderer)],
             render_state: RenderState {
                 t: 0.0,
@@ -131,23 +130,25 @@ impl<'a> ApplicationHandler for App {
                 let state = self.state.as_mut().unwrap();
                 state.lazy_vulkan.resize(size.width, size.height);
             }
+            WindowEvent::RedrawRequested => {
+                let state = self.state.as_mut().unwrap();
+                state.render_state.t += state.render_state.last_render_time.elapsed().as_secs_f32();
+                let lazy_vulkan = &mut state.lazy_vulkan;
+                lazy_vulkan.draw(&state.render_state, &mut state.sub_renderers);
+                state.render_state.last_render_time = Instant::now();
+            }
             _ => (),
         }
     }
 
     fn about_to_wait(&mut self, _: &winit::event_loop::ActiveEventLoop) {
         let state = self.state.as_mut().unwrap();
-        state.render_state.t += state.render_state.last_render_time.elapsed().as_secs_f32();
-        let lazy_vulkan = &mut state.lazy_vulkan;
-        lazy_vulkan.draw(&state.render_state, &mut state.sub_renderers);
-        state.render_state.last_render_time = Instant::now();
+        state.window.request_redraw();
     }
 }
 
 // from chatGPT
-pub fn psychedelic_vec4(t: f32, dt: f32) -> Vec4 {
-    let mut time = t + dt;
-
+pub fn psychedelic_vec4(mut time: f32) -> Vec4 {
     time *= 50.0;
 
     let r = (time * 1.0 + 0.0).sin() * 0.5 + 0.5;

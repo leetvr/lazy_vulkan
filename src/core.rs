@@ -58,4 +58,51 @@ impl Core {
             physical_device,
         }
     }
+
+    pub fn headless() -> Self {
+        let entry = unsafe { ash::Entry::load().unwrap() };
+
+        #[allow(unused_mut)]
+        let mut instance_extensions = Vec::new();
+        let version;
+        let instance_create_flags;
+
+        #[cfg(any(target_os = "macos", target_os = "ios"))]
+        {
+            instance_extensions.push(ash::khr::portability_enumeration::NAME.as_ptr());
+            instance_extensions.push(ash::khr::get_physical_device_properties2::NAME.as_ptr());
+            version = vk::API_VERSION_1_2;
+            instance_create_flags = vk::InstanceCreateFlags::ENUMERATE_PORTABILITY_KHR;
+        }
+
+        #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+        {
+            version = vk::API_VERSION_1_3;
+            instance_create_flags = vk::InstanceCreateFlags::default();
+        }
+
+        let instance = unsafe {
+            entry
+                .create_instance(
+                    &vk::InstanceCreateInfo::default()
+                        .flags(instance_create_flags)
+                        .enabled_extension_names(&instance_extensions)
+                        .application_info(&vk::ApplicationInfo::default().api_version(version)),
+                    None,
+                )
+                .unwrap()
+        };
+
+        let physical_device = unsafe { instance.enumerate_physical_devices() }
+            .unwrap()
+            .first()
+            .copied()
+            .unwrap();
+
+        Self {
+            entry,
+            instance,
+            physical_device,
+        }
+    }
 }

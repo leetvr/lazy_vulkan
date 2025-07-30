@@ -4,6 +4,7 @@ use ash::vk;
 
 use crate::{descriptors::Descriptors, Allocator, Context, TransferToken, FULL_IMAGE};
 
+#[derive(Debug, Clone)]
 pub struct Image {
     pub handle: vk::Image,
     pub view: vk::ImageView,
@@ -16,20 +17,21 @@ pub struct Image {
 pub struct ImageManager {
     context: Arc<Context>,
     current_id: u32,
+    texture_descriptor_set: vk::DescriptorSet,
 }
 
 impl ImageManager {
-    pub fn new(context: Arc<Context>) -> ImageManager {
+    pub fn new(context: Arc<Context>, texture_descriptor_set: vk::DescriptorSet) -> ImageManager {
         ImageManager {
             context,
             current_id: 0,
+            texture_descriptor_set,
         }
     }
 
     pub fn create_image(
         &mut self,
         allocator: &mut Allocator,
-        descriptors: &mut Descriptors,
         format: vk::Format,
         extent: vk::Extent2D,
         image_bytes: impl AsRef<[u8]>,
@@ -88,7 +90,7 @@ impl ImageManager {
         .unwrap();
 
         let id = self.allocate_id();
-        unsafe { descriptors.update_texture_descriptor_set(id, view, sampler) };
+        unsafe { self.update_texture_descriptor_set(id, view, sampler) };
 
         Image {
             handle,
@@ -98,6 +100,30 @@ impl ImageManager {
             sampler,
             transfer_complete,
         }
+    }
+
+    pub unsafe fn update_texture_descriptor_set(
+        &self,
+        texture_id: u32,
+        image_view: vk::ImageView,
+        sampler: vk::Sampler,
+    ) {
+        self.context.device.update_descriptor_sets(
+            std::slice::from_ref(
+                &vk::WriteDescriptorSet::default()
+                    .image_info(std::slice::from_ref(
+                        &vk::DescriptorImageInfo::default()
+                            .sampler(sampler)
+                            .image_view(image_view)
+                            .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL),
+                    ))
+                    .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                    .dst_array_element(texture_id)
+                    .dst_binding(Descriptors::TEXTURE_BINDING)
+                    .dst_set(self.texture_descriptor_set),
+            ),
+            &[],
+        );
     }
 
     fn allocate_id(&mut self) -> u32 {

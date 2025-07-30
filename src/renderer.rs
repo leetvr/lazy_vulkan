@@ -18,7 +18,7 @@ use super::{
 pub struct Renderer {
     pub context: Arc<Context>,
     pub fence: vk::Fence,
-    pub swapchain: Swapchain,
+    pub swapchain: Option<Swapchain>,
     pub depth_buffer: DepthBuffer,
     pub allocator: Allocator,
     pub image_manager: ImageManager,
@@ -26,7 +26,11 @@ pub struct Renderer {
 }
 
 impl Renderer {
-    pub(crate) fn new(context: Arc<Context>, swapchain: Swapchain) -> Self {
+    pub(crate) fn new(
+        context: Arc<Context>,
+        swapchain: Option<Swapchain>,
+        drawable_size: vk::Extent2D,
+    ) -> Self {
         let device = &context.device;
 
         let fence = unsafe {
@@ -38,9 +42,9 @@ impl Renderer {
         .unwrap();
 
         let allocator = Allocator::new(context.clone());
-        let image_manager = ImageManager::new(context.clone());
-        let depth_buffer = DepthBuffer::new(&context, &swapchain);
         let descriptors = Descriptors::new(context.clone());
+        let image_manager = ImageManager::new(context.clone(), descriptors.set);
+        let depth_buffer = DepthBuffer::new(&context, drawable_size);
 
         Self {
             context,
@@ -53,13 +57,29 @@ impl Renderer {
         }
     }
 
-    pub fn draw<S>(&mut self, sub_renderers: &mut [Box<dyn SubRenderer<State = S>>]) {
+    pub(crate) fn from_swapchain(context: Arc<Context>, swapchain: Swapchain) -> Self {
+        let extent = swapchain.extent;
+        Self::new(context, Some(swapchain), extent)
+    }
+
+    pub(crate) fn headless(context: Arc<Context>) -> Self {
+        Self::new(
+            context,
+            None,
+            vk::Extent2D {
+                width: 1,
+                height: 1,
+            },
+        )
+    }
+
+    pub fn draw<S>(&mut self, state: &S, sub_renderers: &mut [Box<dyn SubRenderer<State = S>>]) {
         // Begin rendering
         let drawable = self.begin_rendering();
 
         // Stage transfers for the next frame
         for subrenderer in &mut *sub_renderers {
-            subrenderer.stage_transfers(&mut self.allocator);
+            subrenderer.stage_transfers(state, &mut self.allocator);
         }
 
         // Draw with our sub-renderers
@@ -69,37 +89,23 @@ impl Renderer {
                 drawable,
                 self.depth_buffer,
             );
-            subrenderer.draw(&self.context, params);
+            subrenderer.draw(state, &self.context, params);
         }
 
         // End rendering
         self.end_rendering(drawable);
 
         // Present
-        self.swapchain
-            .present(drawable, self.context.graphics_queue);
+        if let Some(swapchain) = &self.swapchain {
+            swapchain.present(drawable, self.context.graphics_queue);
+        }
     }
 
     fn begin_rendering(&mut self) -> Drawable {
+        let drawable = self.get_drawable();
+
         let context = &self.context;
         let device = &context.device;
-
-        if self.swapchain.needs_update {
-            unsafe { device.device_wait_idle().unwrap() };
-            self.swapchain.resize(&self.context.device);
-        }
-
-        let drawable = loop {
-            if let Some(drawable) = self.swapchain.get_drawable() {
-                break drawable;
-            }
-
-            unsafe { device.device_wait_idle().unwrap() };
-            self.swapchain.resize(&self.context.device);
-        };
-
-        // Recreate the depth buffer if the swapchain was resized
-        self.depth_buffer.validate(&self.context, &self.swapchain);
 
         // Get a `Drawable` from the swapchain
         let render_area = drawable.extent;
@@ -200,6 +206,42 @@ impl Renderer {
         drawable
     }
 
+    pub fn resize(&mut self, extent: vk::Extent2D) {
+        let Some(swapchain) = self.swapchain.as_mut() else {
+            unimplemented!("Headless rendering not implemented yet");
+        };
+
+        swapchain.extent = extent;
+        swapchain.needs_update = true;
+    }
+
+    fn get_drawable(&mut self) -> Drawable {
+        let device = &self.context.device;
+
+        let Some(swapchain) = self.swapchain.as_mut() else {
+            unimplemented!("Headless rendering not implemented yet");
+        };
+
+        if swapchain.needs_update {
+            unsafe { device.device_wait_idle().unwrap() };
+            swapchain.resize(&self.context.device);
+        }
+
+        let drawable = loop {
+            if let Some(drawable) = swapchain.get_drawable() {
+                break drawable;
+            }
+
+            unsafe { device.device_wait_idle().unwrap() };
+            swapchain.resize(&self.context.device);
+        };
+
+        // Recreate the depth buffer if the swapchain was resized
+        self.depth_buffer.validate(&self.context, swapchain);
+
+        drawable
+    }
+
     fn end_rendering(&self, drawable: Drawable) {
         let context = &self.context;
         let device = &context.device;
@@ -256,7 +298,7 @@ impl Renderer {
         Pipeline::new::<R>(
             self.context.clone(),
             &self.descriptors,
-            self.swapchain.format,
+            self.get_drawable_format(),
             vertex_shader,
             fragment_shader,
         )
@@ -271,11 +313,18 @@ impl Renderer {
     ) -> Image {
         self.image_manager.create_image(
             &mut self.allocator,
-            &mut self.descriptors,
             format,
             extent,
             image_bytes,
             image_usage_flags,
         )
+    }
+
+    pub fn get_drawable_format(&self) -> vk::Format {
+        if let Some(swapchain) = &self.swapchain {
+            return swapchain.format;
+        }
+
+        unimplemented!("Headless rendering not implemented yet");
     }
 }

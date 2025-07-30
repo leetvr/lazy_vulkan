@@ -5,9 +5,8 @@ use crate::{allocator::Allocator, context::Context, draw_params::DrawParams, pip
 pub trait SubRenderer {
     type State;
 
-    fn draw(&mut self, context: &Context, params: DrawParams);
-    fn stage_transfers(&mut self, allocator: &mut Allocator);
-    fn update_state(&mut self, state: &Self::State);
+    fn draw(&mut self, state: &Self::State, context: &Context, params: DrawParams);
+    fn stage_transfers(&mut self, state: &Self::State, allocator: &mut Allocator);
 
     /// Convenience function to Generally Do the right thing. Ensure that:
     ///
