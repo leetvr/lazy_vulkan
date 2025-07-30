@@ -42,9 +42,9 @@ impl Renderer {
         .unwrap();
 
         let allocator = Allocator::new(context.clone());
-        let image_manager = ImageManager::new(context.clone());
-        let depth_buffer = DepthBuffer::new(&context, drawable_size);
         let descriptors = Descriptors::new(context.clone());
+        let image_manager = ImageManager::new(context.clone(), descriptors.set);
+        let depth_buffer = DepthBuffer::new(&context, drawable_size);
 
         Self {
             context,
@@ -313,7 +313,6 @@ impl Renderer {
     ) -> Image {
         self.image_manager.create_image(
             &mut self.allocator,
-            &mut self.descriptors,
             format,
             extent,
             image_bytes,
