@@ -165,11 +165,58 @@ impl Allocator {
         );
     }
 
-    #[allow(unused)]
-    pub fn free<T: Sized>(&mut self, allocation: BufferAllocation<T>) {}
+    pub fn upload_to_slab<T: bytemuck::Pod + Debug>(&mut self, data: &[T]) -> SlabUpload<T> {
+        let bytes = bytemuck::cast_slice(data);
+        let size = bytes.len() as vk::DeviceSize;
+
+        // Allocate an offset into our device local memory
+        let global_offset = self
+            .offset_allocator
+            .allocate(size as u32)
+            .expect("Unable to allocate memory. This should be impossible!");
+
+        let staging_buffer_offset = self.staging_buffer.stage(bytes);
+        let device_address = self.backend.get_device_address(global_offset);
+
+        let (ours, theirs) = TransferToken::create_pair();
+
+        self.pending_transfers.push(PendingTransfer {
+            destination: TransferDestination::Slab,
+            staging_buffer_offset,
+            transfer_size: bytes.len() as _,
+            global_offset,
+            transfer_token: ours,
+            allocation_offset: 0,
+        });
+
+        SlabUpload {
+            device_address,
+            size,
+            offset: global_offset,
+            transfer_token: theirs,
+            _phantom: Default::default(),
+        }
+    }
+
+    pub fn free<T: Sized>(&mut self, _allocation: BufferAllocation<T>) {
+        unimplemented!("Free is not yet implemented");
+    }
+
+    pub fn free_from_slab<T: Sized>(&mut self, _allocation: BufferAllocation<T>) {
+        unimplemented!("Free is not yet implemented");
+    }
 }
 
 #[derive(Clone)]
+pub struct SlabUpload<T> {
+    pub device_address: vk::DeviceAddress,
+    pub size: vk::DeviceSize,
+    pub transfer_token: TransferToken,
+    offset: offset_allocator::Allocation,
+    _phantom: PhantomData<T>,
+}
+
+#[derive(Clone, Debug, Default)]
 pub struct TransferToken {
     complete: Arc<AtomicBool>,
 }
@@ -207,6 +254,7 @@ pub struct PendingTransfer {
 enum TransferDestination {
     Buffer(vk::Buffer),
     Image(vk::Image, vk::Extent2D),
+    Slab,
 }
 
 pub struct PendingFree;

@@ -4,6 +4,7 @@ use ash::vk;
 
 use crate::{descriptors::Descriptors, Allocator, Context, TransferToken, FULL_IMAGE};
 
+#[derive(Debug, Clone)]
 pub struct Image {
     pub handle: vk::Image,
     pub view: vk::ImageView,
