@@ -13,7 +13,7 @@ pub struct Swapchain {
     pub needs_update: bool,
     image_available_semaphores: SemaphoreRingBuffer,
     capabilities: vk::SurfaceCapabilitiesKHR,
-    rendering_complete_semaphores: [vk::Semaphore; 3],
+    rendering_complete_semaphores: Vec<vk::Semaphore>,
 }
 
 impl Swapchain {
@@ -70,9 +70,11 @@ impl Swapchain {
 
         let image_available_semaphores = SemaphoreRingBuffer::new(device);
 
-        let rendering_complete_semaphores = std::array::from_fn(|_| {
+        let rendering_complete_semaphores = std::iter::repeat_with(|| {
             unsafe { device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None) }.unwrap()
-        });
+        })
+        .take(images.len())
+        .collect();
 
         Self {
             surface_handle,

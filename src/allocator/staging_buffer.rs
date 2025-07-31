@@ -56,6 +56,8 @@ impl StagingBuffer {
         }
         .unwrap();
 
+        context.set_debug_label(handle, "[lazy_vulkan] Staging Buffer");
+
         // Bind its memory
         unsafe { device.bind_buffer_memory(handle, memory, 0) }.unwrap();
 

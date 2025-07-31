@@ -1,3 +1,5 @@
+use std::ffi::CStr;
+
 use ash::vk;
 use winit::raw_window_handle::HasDisplayHandle;
 
@@ -12,10 +14,12 @@ impl Core {
 
         let display_handle = window.display_handle().unwrap().as_raw();
 
-        #[allow(unused_mut)]
         let mut instance_extensions = ash_window::enumerate_required_extensions(display_handle)
             .unwrap()
             .to_vec();
+
+        // TODO: Make this optional
+        instance_extensions.push(ash::ext::debug_utils::NAME.as_ptr());
 
         let version;
         let instance_create_flags;
@@ -32,6 +36,12 @@ impl Core {
         {
             version = vk::API_VERSION_1_3;
             instance_create_flags = vk::InstanceCreateFlags::default();
+        }
+
+        for extension in &instance_extensions {
+            log::debug!("Requesting extension: {:?}", unsafe {
+                CStr::from_ptr(*extension)
+            });
         }
 
         let instance = unsafe {

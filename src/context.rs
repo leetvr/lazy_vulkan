@@ -11,6 +11,7 @@ pub struct Context {
     pub memory_properties: vk::PhysicalDeviceMemoryProperties,
     pub device_type: vk::PhysicalDeviceType,
     pub device_properties: vk::PhysicalDeviceProperties,
+    debug_utils: Option<ash::ext::debug_utils::Device>,
     #[cfg(any(target_os = "macos", target_os = "ios"))]
     pub dynamic_rendering_pfn: ash::khr::dynamic_rendering::Device,
     #[cfg(any(target_os = "macos", target_os = "ios"))]
@@ -57,12 +58,16 @@ impl Context {
         #[cfg(any(target_os = "macos", target_os = "ios"))]
         let sync2_pfn = ash::khr::synchronization2::Device::new(&core.instance, &device);
 
+        // TODO: Make this dependent on an env var or something
+        let debug_utils = Some(ash::ext::debug_utils::Device::new(&core.instance, &device));
+
         Self {
             device,
             command_pool,
             draw_command_buffer,
             graphics_queue,
             memory_properties,
+            debug_utils,
             device_type: physical_device_properties.device_type,
             device_properties: physical_device_properties,
             #[cfg(any(target_os = "macos", target_os = "ios"))]
@@ -158,6 +163,47 @@ impl Context {
         fence: vk::Fence,
     ) {
         self.sync2_pfn.queue_submit2(queue, submits, fence).unwrap()
+    }
+
+    pub fn set_debug_label<T: ash::vk::Handle>(&self, handle: T, name: &str) {
+        let Some(debug_utils) = &self.debug_utils else {
+            return;
+        };
+
+        unsafe {
+            let object_name = std::ffi::CString::new(name).unwrap();
+            debug_utils.set_debug_utils_object_name(
+                &vk::DebugUtilsObjectNameInfoEXT::default()
+                    .object_handle(handle)
+                    .object_name(object_name.as_c_str()),
+            )
+        }
+        .unwrap()
+    }
+
+    pub fn begin_marker(&self, name: &str, colour: glam::Vec4) {
+        let Some(debug_utils) = &self.debug_utils else {
+            return;
+        };
+
+        unsafe {
+            let label_name = std::ffi::CString::new(name).unwrap();
+            debug_utils.cmd_begin_debug_utils_label(
+                self.draw_command_buffer,
+                &vk::DebugUtilsLabelEXT::default()
+                    .label_name(label_name.as_c_str())
+                    .color(colour.into()),
+            );
+        };
+    }
+    pub fn end_marker(&self) {
+        let Some(debug_utils) = &self.debug_utils else {
+            return;
+        };
+
+        unsafe {
+            debug_utils.cmd_end_debug_utils_label(self.draw_command_buffer);
+        };
     }
 }
 

@@ -147,6 +147,10 @@ impl SubRenderer for MeshRenderer {
         }
     }
 
+    fn label(&self) -> &'static str {
+        "MeshRenderer"
+    }
+
     fn stage_transfers(&mut self, _state: &Self::State, _allocator: &mut lazy_vulkan::Allocator) {
         // no-op
     }

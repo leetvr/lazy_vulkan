@@ -75,22 +75,23 @@ impl Renderer {
 
     pub fn draw<S>(&mut self, state: &S, sub_renderers: &mut [Box<dyn SubRenderer<State = S>>]) {
         // Begin rendering
-        let drawable = self.begin_rendering();
-
-        // Stage transfers for the next frame
-        for subrenderer in &mut *sub_renderers {
-            subrenderer.stage_transfers(state, &mut self.allocator);
-        }
+        let drawable = self.begin_rendering(state, sub_renderers);
 
         // Draw with our sub-renderers
+        self.context
+            .begin_marker("Drawing", glam::vec4(0.0, 0.0, 1.0, 1.0));
         for subrenderer in &mut *sub_renderers {
+            self.context
+                .begin_marker(subrenderer.label(), glam::vec4(1.0, 0.0, 1.0, 1.0));
             let params = DrawParams::new(
                 self.context.draw_command_buffer,
                 drawable,
                 self.depth_buffer,
             );
             subrenderer.draw(state, &self.context, params);
+            self.context.end_marker();
         }
+        self.context.end_marker();
 
         // End rendering
         self.end_rendering(drawable);
@@ -101,7 +102,14 @@ impl Renderer {
         }
     }
 
-    fn begin_rendering(&mut self) -> Drawable {
+    fn begin_rendering<S>(
+        &mut self,
+        state: &S,
+        sub_renderers: &mut [Box<dyn SubRenderer<State = S>>],
+    ) -> Drawable {
+        self.context
+            .begin_marker("Begin Rendering", glam::vec4(0.5, 0.5, 0., 1.));
+        // Get an image from our swapchain
         let drawable = self.get_drawable();
 
         let context = &self.context;
@@ -126,7 +134,15 @@ impl Renderer {
                 .unwrap()
         };
 
-        // Execute any pending transfers from the previous frame
+        // Stage transfers for this frame
+        self.context
+            .begin_marker("Stage Transfers", glam::vec4(1.0, 0.0, 1.0, 1.0));
+        for subrenderer in &mut *sub_renderers {
+            subrenderer.stage_transfers(state, &mut self.allocator);
+        }
+        self.context.end_marker();
+
+        // Execute them
         self.allocator.execute_transfers();
 
         unsafe {
@@ -203,6 +219,8 @@ impl Renderer {
             );
         }
 
+        self.context.end_marker();
+
         drawable
     }
 
@@ -249,6 +267,9 @@ impl Renderer {
         let command_buffer = context.draw_command_buffer;
         let swapchain_image = drawable.image;
 
+        self.context
+            .begin_marker("End Rendering", glam::vec4(1., 1., 0., 1.));
+
         unsafe {
             // End rendering
             context.cmd_end_rendering(command_buffer);
@@ -288,6 +309,8 @@ impl Renderer {
                 self.fence,
             );
         }
+
+        self.context.end_marker();
     }
 
     pub fn create_pipeline<R>(
