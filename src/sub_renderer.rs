@@ -7,6 +7,7 @@ pub trait SubRenderer {
 
     fn draw(&mut self, state: &Self::State, context: &Context, params: DrawParams);
     fn stage_transfers(&mut self, state: &Self::State, allocator: &mut Allocator);
+    fn label(&self) -> &'static str;
 
     /// Convenience function to Generally Do the right thing. Ensure that:
     ///

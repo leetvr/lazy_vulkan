@@ -162,7 +162,7 @@ impl DiscreteDeviceBuffer {
         }
         .unwrap();
 
-        let (slab_buffer, slab_address) = create_slab_buffer(device, device_memory);
+        let (slab_buffer, slab_address) = create_slab_buffer(&context, device_memory);
 
         Self {
             device_memory,
@@ -177,18 +177,21 @@ impl DiscreteDeviceBuffer {
         PendingTransfer {
             destination,
             staging_buffer_offset,
-            allocation_offset,
             transfer_size,
             transfer_token,
+            allocation_offset,
+            global_offset,
             ..
         }: PendingTransfer,
         staging_buffer: &mut StagingBuffer,
     ) {
+        context.begin_marker("Buffer Transfer", glam::vec4(0., 1., 1., 1.));
         let device = &context.device;
         let command_buffer = context.draw_command_buffer;
 
-        let buffer = match destination {
-            TransferDestination::Buffer(buffer) => buffer,
+        let (allocation_offset, buffer) = match destination {
+            TransferDestination::Buffer(buffer) => (allocation_offset, buffer),
+            TransferDestination::Slab => (global_offset.offset as usize, self.slab_buffer),
             _ => return,
         };
 
@@ -222,10 +225,13 @@ impl DiscreteDeviceBuffer {
         };
 
         transfer_token.mark_completed();
+        context.end_marker();
     }
 }
 
-fn create_slab_buffer(device: &ash::Device, device_memory: vk::DeviceMemory) -> (vk::Buffer, u64) {
+fn create_slab_buffer(context: &Context, device_memory: vk::DeviceMemory) -> (vk::Buffer, u64) {
+    let device = &context.device;
+
     // Create the buffer
     let slab_buffer = unsafe {
         device.create_buffer(
@@ -240,6 +246,8 @@ fn create_slab_buffer(device: &ash::Device, device_memory: vk::DeviceMemory) -> 
         )
     }
     .unwrap();
+
+    context.set_debug_label(slab_buffer, "Slab Buffer");
 
     // Bind it!
     unsafe { device.bind_buffer_memory(slab_buffer, device_memory, 0) }.unwrap();
@@ -307,7 +315,7 @@ impl IntegratedDeviceBuffer {
             )
         };
 
-        let (slab_buffer, slab_address) = create_slab_buffer(device, global_memory);
+        let (slab_buffer, slab_address) = create_slab_buffer(&context, global_memory);
 
         IntegratedDeviceBuffer {
             global_memory,

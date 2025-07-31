@@ -71,6 +71,13 @@ impl Allocator {
         }
         .unwrap();
 
+        let label = format!(
+            "[lazy_vulkan] BufferAllocation<{}> at offset {}",
+            std::any::type_name::<T>(),
+            offset.offset
+        );
+        self.context.set_debug_label(handle, &label);
+
         // Bind its memory
         unsafe {
             device.bind_buffer_memory(handle, self.backend.device_memory(), offset.offset as _)
@@ -158,11 +165,14 @@ impl Allocator {
     }
 
     pub fn execute_transfers(&mut self) {
+        self.context
+            .begin_marker("Execute Transfers", glam::vec4(0., 0., 1., 1.));
         self.backend.execute_transfers(
             &self.context,
             std::mem::take(&mut self.pending_transfers),
             &mut self.staging_buffer,
         );
+        self.context.end_marker();
     }
 
     pub fn upload_to_slab<T: bytemuck::Pod + Debug>(&mut self, data: &[T]) -> SlabUpload<T> {

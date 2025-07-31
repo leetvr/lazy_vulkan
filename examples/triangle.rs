@@ -48,6 +48,10 @@ impl SubRenderer for TriangleRenderer {
     fn stage_transfers(&mut self, _state: &Self::State, _allocator: &mut lazy_vulkan::Allocator) {
         // no-op
     }
+
+    fn label(&self) -> &'static str {
+        "Triangle Renderer"
+    }
 }
 
 pub struct RenderState {
