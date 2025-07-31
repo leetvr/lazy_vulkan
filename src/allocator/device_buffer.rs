@@ -124,6 +124,7 @@ impl DeviceBuffer {
 
 pub struct DiscreteDeviceBuffer {
     device_memory: vk::DeviceMemory,
+    #[allow(unused)]
     slab_buffer: vk::Buffer,
     slab_address: vk::DeviceAddress,
 }
@@ -250,6 +251,7 @@ fn create_slab_buffer(device: &ash::Device) -> (vk::Buffer, u64) {
 pub struct IntegratedDeviceBuffer {
     global_memory: vk::DeviceMemory,
     global_ptr: NonNull<u8>,
+    #[allow(unused)]
     slab_buffer: vk::Buffer,
     slab_address: vk::DeviceAddress,
 }

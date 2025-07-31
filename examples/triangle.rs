@@ -36,13 +36,9 @@ impl SubRenderer for TriangleRenderer {
         self.begin_rendering(context, &self.pipeline);
         self.colour = psychedelic_vec4(state.t);
         unsafe {
-            self.pipeline.update_registers(
-                params.draw_command_buffer,
-                context,
-                &Registers {
-                    colour: self.colour,
-                },
-            );
+            self.pipeline.update_registers(&Registers {
+                colour: self.colour,
+            });
             context
                 .device
                 .cmd_draw(params.draw_command_buffer, 3, 1, 0, 0)

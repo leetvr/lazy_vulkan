@@ -136,15 +136,11 @@ impl SubRenderer for MeshRenderer {
         let vertex_count = self.buffer.len() as u32;
 
         unsafe {
-            self.pipeline.update_registers(
-                params.draw_command_buffer,
-                context,
-                &Registers {
-                    mvp,
-                    vertex_buffer: self.buffer.device_address,
-                    texture_id: self.logo_image.id,
-                },
-            );
+            self.pipeline.update_registers(&Registers {
+                mvp,
+                vertex_buffer: self.buffer.device_address,
+                texture_id: self.logo_image.id,
+            });
             context
                 .device
                 .cmd_draw(params.draw_command_buffer, vertex_count, 1, 0, 0)
