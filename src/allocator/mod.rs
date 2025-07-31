@@ -212,6 +212,7 @@ pub struct SlabUpload<T> {
     pub device_address: vk::DeviceAddress,
     pub size: vk::DeviceSize,
     pub transfer_token: TransferToken,
+    #[allow(unused)]
     offset: offset_allocator::Allocation,
     _phantom: PhantomData<T>,
 }

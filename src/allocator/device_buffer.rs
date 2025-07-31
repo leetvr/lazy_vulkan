@@ -124,6 +124,7 @@ impl DeviceBuffer {
 
 pub struct DiscreteDeviceBuffer {
     device_memory: vk::DeviceMemory,
+    #[allow(unused)]
     slab_buffer: vk::Buffer,
     slab_address: vk::DeviceAddress,
 }
@@ -161,7 +162,7 @@ impl DiscreteDeviceBuffer {
         }
         .unwrap();
 
-        let (slab_buffer, slab_address) = create_slab_buffer(device);
+        let (slab_buffer, slab_address) = create_slab_buffer(device, device_memory);
 
         Self {
             device_memory,
@@ -224,7 +225,7 @@ impl DiscreteDeviceBuffer {
     }
 }
 
-fn create_slab_buffer(device: &ash::Device) -> (vk::Buffer, u64) {
+fn create_slab_buffer(device: &ash::Device, device_memory: vk::DeviceMemory) -> (vk::Buffer, u64) {
     // Create the buffer
     let slab_buffer = unsafe {
         device.create_buffer(
@@ -240,16 +241,22 @@ fn create_slab_buffer(device: &ash::Device) -> (vk::Buffer, u64) {
     }
     .unwrap();
 
+    // Bind it!
+    unsafe { device.bind_buffer_memory(slab_buffer, device_memory, 0) }.unwrap();
+
+    // Now rew.. I mean, get its address:
     let slab_address = unsafe {
         device
             .get_buffer_device_address(&vk::BufferDeviceAddressInfo::default().buffer(slab_buffer))
     };
+
     (slab_buffer, slab_address)
 }
 
 pub struct IntegratedDeviceBuffer {
     global_memory: vk::DeviceMemory,
     global_ptr: NonNull<u8>,
+    #[allow(unused)]
     slab_buffer: vk::Buffer,
     slab_address: vk::DeviceAddress,
 }
@@ -300,7 +307,7 @@ impl IntegratedDeviceBuffer {
             )
         };
 
-        let (slab_buffer, slab_address) = create_slab_buffer(device);
+        let (slab_buffer, slab_address) = create_slab_buffer(device, global_memory);
 
         IntegratedDeviceBuffer {
             global_memory,

@@ -10,8 +10,7 @@ use super::{context::Context, depth_buffer::DEPTH_FORMAT};
 pub struct Pipeline {
     pub handle: vk::Pipeline,
     pub layout: vk::PipelineLayout,
-    #[allow(unused)]
-    pub context: Arc<Context>,
+    context: Arc<Context>,
     // Avoids having to pass &Descriptors around at draw time
     pub descriptor_set: vk::DescriptorSet,
 }
@@ -115,14 +114,10 @@ impl Pipeline {
         }
     }
 
-    pub fn update_registers<Registers: bytemuck::Pod>(
-        &self,
-        draw_command_buffer: vk::CommandBuffer,
-        context: &Context,
-        registers: &Registers,
-    ) {
+    pub fn update_registers<Registers: bytemuck::Pod>(&self, registers: &Registers) {
+        let draw_command_buffer = self.context.draw_command_buffer;
         unsafe {
-            context.device.cmd_push_constants(
+            self.context.device.cmd_push_constants(
                 draw_command_buffer,
                 self.layout,
                 vk::ShaderStageFlags::ALL_GRAPHICS,
