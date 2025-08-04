@@ -107,8 +107,6 @@ impl Renderer {
         state: &S,
         sub_renderers: &mut [Box<dyn SubRenderer<State = S>>],
     ) -> Drawable {
-        self.context
-            .begin_marker("Begin Rendering", glam::vec4(0.5, 0.5, 0., 1.));
         // Get an image from our swapchain
         let drawable = self.get_drawable();
 
@@ -133,6 +131,9 @@ impl Renderer {
                 .begin_command_buffer(command_buffer, &vk::CommandBufferBeginInfo::default())
                 .unwrap()
         };
+
+        self.context
+            .begin_marker("Begin Rendering", glam::vec4(0.5, 0.5, 0., 1.));
 
         // Stage transfers for this frame
         self.context
@@ -267,9 +268,6 @@ impl Renderer {
         let command_buffer = context.draw_command_buffer;
         let swapchain_image = drawable.image;
 
-        self.context
-            .begin_marker("End Rendering", glam::vec4(1., 1., 0., 1.));
-
         unsafe {
             // End rendering
             context.cmd_end_rendering(command_buffer);
@@ -309,8 +307,6 @@ impl Renderer {
                 self.fence,
             );
         }
-
-        self.context.end_marker();
     }
 
     pub fn create_pipeline<R>(
