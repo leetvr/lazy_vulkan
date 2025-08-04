@@ -53,6 +53,7 @@ impl Allocator {
         let device_size = (max_size * std::mem::size_of::<T>()) as vk::DeviceSize;
 
         // Allocate an offset into our device local memory
+        // TODO: alignment
         let offset = self
             .offset_allocator
             .allocate(device_size as u32)
