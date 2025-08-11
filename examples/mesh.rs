@@ -116,7 +116,12 @@ impl MeshRenderer {
 
 impl SubRenderer for MeshRenderer {
     type State = RenderState;
-    fn draw(&mut self, state: &Self::State, context: &Context, params: lazy_vulkan::DrawParams) {
+    fn draw_opaque(
+        &mut self,
+        state: &Self::State,
+        context: &Context,
+        params: lazy_vulkan::DrawParams,
+    ) {
         // Make sure our resources are available before we use them
         if !self.initial_upload.is_complete() {
             return;
@@ -149,10 +154,6 @@ impl SubRenderer for MeshRenderer {
 
     fn label(&self) -> &'static str {
         "MeshRenderer"
-    }
-
-    fn stage_transfers(&mut self, _state: &Self::State, _allocator: &mut lazy_vulkan::Allocator) {
-        // no-op
     }
 }
 
