@@ -88,7 +88,7 @@ impl Renderer {
                 drawable,
                 self.depth_buffer,
             );
-            subrenderer.draw(state, &self.context, params);
+            subrenderer.draw_opaque(state, &self.context, params);
             self.context.end_marker();
         }
         self.context.end_marker();

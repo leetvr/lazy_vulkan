@@ -5,9 +5,26 @@ use crate::{allocator::Allocator, context::Context, draw_params::DrawParams, pip
 pub trait SubRenderer {
     type State;
 
-    fn draw(&mut self, state: &Self::State, context: &Context, params: DrawParams);
-    fn stage_transfers(&mut self, state: &Self::State, allocator: &mut Allocator);
+    /// Used by debug-utils to provide additional information about operations on this subrenderer
     fn label(&self) -> &'static str;
+
+    /// Most sub-renderers, most of the time, will want to override this function as it provides
+    /// the most convenient way to "just render some triangles":
+    ///
+    /// - The command buffer will be in the recording state
+    /// - A dynamic render pass will be in-progress
+    fn draw_opaque(&mut self, _: &Self::State, _: &Context, _: DrawParams) {}
+
+    /// Override this method if you'd like to perform any transfer operations BEFORE any drawing
+    /// begins.
+    fn stage_transfers(&mut self, _: &Self::State, _: &mut Allocator) {}
+
+    /// Override this method if you'd like to perform any drawing on the final colour image before
+    /// it's presented. Useful for eg. GUI applications or debug overlays.
+    ///
+    /// ## NOTE
+    /// Unlike [`Self::draw_opaque`], *NO* dynamic render-pass will be in progress.
+    fn draw_layer(&mut self, _: &Self::State, _: &Context, _: DrawParams) {}
 
     /// Convenience function to Generally Do the right thing. Ensure that:
     ///
