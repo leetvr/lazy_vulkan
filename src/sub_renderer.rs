@@ -13,18 +13,21 @@ pub trait SubRenderer {
     ///
     /// - The command buffer will be in the recording state
     /// - A dynamic render pass will be in-progress
-    fn draw_opaque(&mut self, _: &Self::State, _: &Context, _: DrawParams) {}
+    #[allow(unused)]
+    fn draw_opaque(&mut self, state: &Self::State, context: &Context, params: DrawParams) {}
 
     /// Override this method if you'd like to perform any transfer operations BEFORE any drawing
     /// begins.
-    fn stage_transfers(&mut self, _: &Self::State, _: &mut Allocator) {}
+    #[allow(unused)]
+    fn stage_transfers(&mut self, state: &Self::State, allocator: &mut Allocator) {}
 
     /// Override this method if you'd like to perform any drawing on the final colour image before
     /// it's presented. Useful for eg. GUI applications or debug overlays.
     ///
     /// ## NOTE
     /// Unlike [`Self::draw_opaque`], *NO* dynamic render-pass will be in progress.
-    fn draw_layer(&mut self, _: &Self::State, _: &Context, _: DrawParams) {}
+    #[allow(unused)]
+    fn draw_layer(&mut self, state: &Self::State, context: &Context, params: DrawParams) {}
 
     /// Convenience function to Generally Do the right thing. Ensure that:
     ///

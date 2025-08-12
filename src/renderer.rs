@@ -93,8 +93,27 @@ impl Renderer {
         }
         self.context.end_marker();
 
-        // End rendering
-        self.end_rendering(drawable);
+        // End dynamic rendering
+        unsafe {
+            self.context
+                .cmd_end_rendering(self.context.draw_command_buffer)
+        };
+
+        // Draw layers
+        for subrenderer in &mut *sub_renderers {
+            self.context
+                .begin_marker(subrenderer.label(), glam::vec4(1.0, 0.0, 1.0, 1.0));
+            let params = DrawParams::new(
+                self.context.draw_command_buffer,
+                drawable,
+                self.depth_buffer,
+            );
+            subrenderer.draw_layer(state, &self.context, params);
+            self.context.end_marker();
+        }
+
+        // Transition the colour image to the present layout and submit all work
+        self.submit_rendering(drawable);
 
         // Present
         if let Some(swapchain) = &self.swapchain {
@@ -261,7 +280,7 @@ impl Renderer {
         drawable
     }
 
-    fn end_rendering(&self, drawable: Drawable) {
+    fn submit_rendering(&self, drawable: Drawable) {
         let context = &self.context;
         let device = &context.device;
         let queue = context.graphics_queue;
@@ -269,10 +288,7 @@ impl Renderer {
         let swapchain_image = drawable.image;
 
         unsafe {
-            // End rendering
-            context.cmd_end_rendering(command_buffer);
-
-            // Next, transition the color attachment into the present state
+            // First, transition the color attachment into the present state
             context.cmd_pipeline_barrier2(
                 command_buffer,
                 &vk::DependencyInfo::default().image_memory_barriers(&[
