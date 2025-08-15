@@ -11,7 +11,7 @@ version = "0.1.0"
 ash = { features = ["linked"], version = "0.38.0" }
 ash-window = "0.13.0"
 bytemuck = "1.13.0"
-glam = "0.22.0"
+glam = "0.30.5"
 log = "0.4.17"
 offset-allocator = "0.2.0"
 png = "0.17.16"

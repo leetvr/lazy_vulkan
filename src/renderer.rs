@@ -158,7 +158,7 @@ impl Renderer {
         self.context
             .begin_marker("Stage Transfers", glam::vec4(1.0, 0.0, 1.0, 1.0));
         for subrenderer in &mut *sub_renderers {
-            subrenderer.stage_transfers(state, &mut self.allocator);
+            subrenderer.stage_transfers(state, &mut self.allocator, &mut self.image_manager);
         }
         self.context.end_marker();
 
@@ -222,7 +222,7 @@ impl Renderer {
                         .store_op(vk::AttachmentStoreOp::STORE)
                         .clear_value(vk::ClearValue {
                             color: vk::ClearColorValue {
-                                float32: [0.1, 0.1, 0.1, 1.0],
+                                float32: [0.0, 0.0, 0.0, 1.0],
                             },
                         })]),
             );

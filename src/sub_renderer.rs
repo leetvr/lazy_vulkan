@@ -1,6 +1,9 @@
 use ash::vk;
 
-use crate::{allocator::Allocator, context::Context, draw_params::DrawParams, pipeline::Pipeline};
+use crate::{
+    allocator::Allocator, context::Context, draw_params::DrawParams, pipeline::Pipeline,
+    ImageManager,
+};
 
 pub trait SubRenderer {
     type State;
@@ -19,7 +22,13 @@ pub trait SubRenderer {
     /// Override this method if you'd like to perform any transfer operations BEFORE any drawing
     /// begins.
     #[allow(unused)]
-    fn stage_transfers(&mut self, state: &Self::State, allocator: &mut Allocator) {}
+    fn stage_transfers(
+        &mut self,
+        state: &Self::State,
+        allocator: &mut Allocator,
+        image_manager: &mut ImageManager,
+    ) {
+    }
 
     /// Override this method if you'd like to perform any drawing on the final colour image before
     /// it's presented. Useful for eg. GUI applications or debug overlays.
