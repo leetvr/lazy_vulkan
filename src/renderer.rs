@@ -362,4 +362,12 @@ impl Renderer {
 
         unimplemented!("Headless rendering not implemented yet");
     }
+
+    pub fn get_drawable_extent(&self) -> vk::Extent2D {
+        if let Some(swapchain) = &self.swapchain {
+            return swapchain.extent;
+        }
+
+        unimplemented!("Headless rendering not implemented yet");
+    }
 }
