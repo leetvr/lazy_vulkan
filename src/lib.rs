@@ -36,7 +36,7 @@ pub struct LazyVulkan<SF: StateFamily> {
 impl<SF: StateFamily> LazyVulkan<SF> {
     pub fn from_window(window: &winit::window::Window) -> Self {
         let core = Core::from_window(window);
-        let context = Arc::new(Context::new(&core));
+        let context = Arc::new(Context::new_from_window(&core));
         let swapchain = Swapchain::new(&context.device, &core, window, vk::SwapchainKHR::null());
         let renderer = Renderer::from_swapchain(context.clone(), swapchain);
 
@@ -49,7 +49,7 @@ impl<SF: StateFamily> LazyVulkan<SF> {
 
     pub fn headless() -> Self {
         let core = Core::headless();
-        let context = Arc::new(Context::new(&core));
+        let context = Arc::new(Context::new_headless(&core));
         let renderer = Renderer::headless(context.clone());
 
         LazyVulkan {

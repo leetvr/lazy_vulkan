@@ -1,3 +1,8 @@
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+use std::ffi::c_char;
+#[cfg(not(any(target_os = "macos", target_os = "ios")))]
+use std::os::raw::c_char;
+
 use ash::vk::{self, MemoryRequirements};
 
 use super::core::Core;
@@ -19,11 +24,30 @@ pub struct Context {
 }
 
 impl Context {
-    pub(crate) fn new(core: &Core) -> Self {
+    pub(crate) fn new_from_window(core: &Core) -> Self {
         let instance = &core.instance;
         let physical_device = core.physical_device;
 
-        let device = create_device(instance, physical_device);
+        let device = create_device(
+            instance,
+            physical_device,
+            &mut vec![ash::khr::swapchain::NAME.as_ptr()],
+        );
+
+        Context::new(core, device)
+    }
+
+    pub(crate) fn new_headless(core: &Core) -> Context {
+        let instance = &core.instance;
+        let physical_device = core.physical_device;
+
+        let device = create_device(instance, physical_device, &mut vec![]);
+        Context::new(core, device)
+    }
+
+    fn new(core: &Core, device: ash::Device) -> Self {
+        let instance = &core.instance;
+        let physical_device = core.physical_device;
 
         let command_pool = unsafe {
             device.create_command_pool(
@@ -208,13 +232,16 @@ impl Context {
 }
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
-fn create_device(instance: &ash::Instance, physical_device: vk::PhysicalDevice) -> ash::Device {
-    let enabled_extension_names = [
-        ash::khr::swapchain::NAME.as_ptr(),
+fn create_device(
+    instance: &ash::Instance,
+    physical_device: vk::PhysicalDevice,
+    enabled_extension_names: &mut Vec<*const c_char>,
+) -> ash::Device {
+    enabled_extension_names.extend_from_slice(&[
         ash::khr::portability_subset::NAME.as_ptr(),
         ash::khr::dynamic_rendering::NAME.as_ptr(),
         ash::khr::synchronization2::NAME.as_ptr(),
-    ];
+    ]);
 
     let device = unsafe {
         instance.create_device(
@@ -259,14 +286,16 @@ fn create_device(instance: &ash::Instance, physical_device: vk::PhysicalDevice) 
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "ios")))]
-fn create_device(instance: &ash::Instance, physical_device: vk::PhysicalDevice) -> ash::Device {
-    let enabled_extension_names = [ash::khr::swapchain::NAME.as_ptr()];
-
+fn create_device(
+    instance: &ash::Instance,
+    physical_device: vk::PhysicalDevice,
+    enabled_extension_names: &mut Vec<*const c_char>,
+) -> ash::Device {
     let device = unsafe {
         instance.create_device(
             physical_device,
             &vk::DeviceCreateInfo::default()
-                .enabled_extension_names(&enabled_extension_names)
+                .enabled_extension_names(enabled_extension_names)
                 .queue_create_infos(&[vk::DeviceQueueCreateInfo::default()
                     .queue_family_index(0)
                     .queue_priorities(&[1.0])])
