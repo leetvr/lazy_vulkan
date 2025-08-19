@@ -1,7 +1,7 @@
 use std::{path::Path, time::Instant};
 
 use glam::Vec4;
-use lazy_vulkan::{Context, LazyVulkan, SubRenderer};
+use lazy_vulkan::{Context, LazyVulkan, StateFamily, SubRenderer};
 use winit::{
     application::ApplicationHandler,
     dpi::PhysicalSize,
@@ -17,7 +17,7 @@ pub struct TriangleRenderer {
 }
 
 impl TriangleRenderer {
-    pub fn new(renderer: &lazy_vulkan::Renderer) -> Self {
+    pub fn new(renderer: &lazy_vulkan::Renderer<RenderStateFamily>) -> Self {
         let pipeline = renderer.create_pipeline::<Registers>(
             Path::new("examples/shaders/triangle.vert.spv"),
             Path::new("examples/shaders/colour.frag.spv"),
@@ -30,7 +30,7 @@ impl TriangleRenderer {
     }
 }
 
-impl SubRenderer for TriangleRenderer {
+impl<'a> SubRenderer<'a> for TriangleRenderer {
     type State = RenderState;
     fn draw_opaque(
         &mut self,
@@ -56,8 +56,12 @@ impl SubRenderer for TriangleRenderer {
 }
 
 pub struct RenderState {
-    last_render_time: Instant,
     t: f32,
+}
+
+pub struct RenderStateFamily;
+impl StateFamily for RenderStateFamily {
+    type For<'s> = RenderState;
 }
 
 #[repr(C)]
@@ -75,10 +79,10 @@ struct App {
 }
 
 struct State {
-    lazy_vulkan: LazyVulkan,
-    sub_renderers: Vec<Box<dyn SubRenderer<State = RenderState>>>,
-    render_state: RenderState,
+    lazy_vulkan: LazyVulkan<RenderStateFamily>,
     window: winit::window::Window,
+    last_render_time: Instant,
+    t: f32,
 }
 
 // ------------
@@ -95,17 +99,15 @@ impl<'a> ApplicationHandler for App {
             )
             .unwrap();
 
-        let lazy_vulkan = LazyVulkan::from_window(&window);
+        let mut lazy_vulkan = LazyVulkan::from_window(&window);
         let sub_renderer = TriangleRenderer::new(&lazy_vulkan.renderer);
+        lazy_vulkan.add_sub_renderer(Box::new(sub_renderer));
 
         self.state = Some(State {
             lazy_vulkan,
             window,
-            sub_renderers: vec![Box::new(sub_renderer)],
-            render_state: RenderState {
-                t: 0.0,
-                last_render_time: Instant::now(),
-            },
+            last_render_time: Instant::now(),
+            t: 0.,
         });
     }
 
@@ -133,10 +135,10 @@ impl<'a> ApplicationHandler for App {
             }
             WindowEvent::RedrawRequested => {
                 let state = self.state.as_mut().unwrap();
-                state.render_state.t += state.render_state.last_render_time.elapsed().as_secs_f32();
+                state.t += state.last_render_time.elapsed().as_secs_f32();
                 let lazy_vulkan = &mut state.lazy_vulkan;
-                lazy_vulkan.draw(&state.render_state, &mut state.sub_renderers);
-                state.render_state.last_render_time = Instant::now();
+                lazy_vulkan.draw(&RenderState { t: state.t });
+                state.last_render_time = Instant::now();
             }
             _ => (),
         }

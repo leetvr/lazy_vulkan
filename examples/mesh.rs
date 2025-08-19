@@ -2,7 +2,9 @@ use std::{f32::consts::TAU, path::Path, time::Instant};
 
 use ash::vk;
 use glam::{vec2, vec4, Quat};
-use lazy_vulkan::{BufferAllocation, Context, Image, LazyVulkan, SubRenderer, TransferToken};
+use lazy_vulkan::{
+    BufferAllocation, Context, Image, LazyVulkan, StateFamily, SubRenderer, TransferToken,
+};
 use winit::{
     application::ApplicationHandler,
     dpi::PhysicalSize,
@@ -83,7 +85,7 @@ pub struct MeshRenderer {
 }
 
 impl MeshRenderer {
-    pub fn new(renderer: &mut lazy_vulkan::Renderer) -> Self {
+    pub fn new(renderer: &mut lazy_vulkan::Renderer<RenderStateFamily>) -> Self {
         // Create our pipeline
         let pipeline = renderer.create_pipeline::<Registers>(
             Path::new("examples/shaders/mesh.vert.spv"),
@@ -114,8 +116,8 @@ impl MeshRenderer {
     }
 }
 
-impl SubRenderer for MeshRenderer {
-    type State = RenderState;
+impl<'s> SubRenderer<'s> for MeshRenderer {
+    type State = RenderState<'s>;
     fn draw_opaque(
         &mut self,
         state: &Self::State,
@@ -157,9 +159,15 @@ impl SubRenderer for MeshRenderer {
     }
 }
 
-pub struct RenderState {
-    last_render_time: Instant,
+pub struct RenderState<'s> {
+    #[allow(unused)]
+    last_render_time: &'s Instant,
     t: f32,
+}
+
+pub struct RenderStateFamily;
+impl StateFamily for RenderStateFamily {
+    type For<'s> = RenderState<'s>;
 }
 
 #[repr(C)]
@@ -220,10 +228,10 @@ struct App {
 }
 
 struct State {
-    lazy_vulkan: LazyVulkan,
+    lazy_vulkan: LazyVulkan<RenderStateFamily>,
     window: winit::window::Window,
-    sub_renderers: Vec<Box<dyn SubRenderer<State = RenderState>>>,
-    render_state: RenderState,
+    last_render_time: Instant,
+    t: f32,
 }
 
 impl<'a> ApplicationHandler for App {
@@ -238,15 +246,13 @@ impl<'a> ApplicationHandler for App {
 
         let mut lazy_vulkan = LazyVulkan::from_window(&window);
         let sub_renderer = MeshRenderer::new(&mut lazy_vulkan.renderer);
+        lazy_vulkan.add_sub_renderer(Box::new(sub_renderer));
 
         self.state = Some(State {
             lazy_vulkan,
             window,
-            sub_renderers: vec![Box::new(sub_renderer)],
-            render_state: RenderState {
-                t: 0.0,
-                last_render_time: Instant::now(),
-            },
+            t: 0.0,
+            last_render_time: Instant::now(),
         });
     }
 
@@ -278,9 +284,12 @@ impl<'a> ApplicationHandler for App {
             }
             WindowEvent::RedrawRequested => {
                 let lazy_vulkan = &mut state.lazy_vulkan;
-                lazy_vulkan.draw(&state.render_state, &mut state.sub_renderers);
-                state.render_state.t += state.render_state.last_render_time.elapsed().as_secs_f32();
-                state.render_state.last_render_time = Instant::now();
+                lazy_vulkan.draw(&RenderState {
+                    last_render_time: &state.last_render_time,
+                    t: state.t,
+                });
+                state.t += state.last_render_time.elapsed().as_secs_f32();
+                state.last_render_time = Instant::now();
             }
             _ => (),
         }

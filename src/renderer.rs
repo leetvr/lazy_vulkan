@@ -3,8 +3,11 @@ use std::{path::Path, sync::Arc, u64};
 use ash::vk::{self};
 
 use crate::{
-    descriptors::Descriptors, draw_params::DrawParams, image_manager::ImageManager,
-    sub_renderer::SubRenderer, Image, Pipeline,
+    descriptors::Descriptors,
+    draw_params::DrawParams,
+    image_manager::ImageManager,
+    sub_renderer::{StateFamily, SubRenderer},
+    Image, Pipeline,
 };
 
 use super::{
@@ -15,7 +18,7 @@ use super::{
     FULL_IMAGE,
 };
 
-pub struct Renderer {
+pub struct Renderer<SF: StateFamily> {
     pub context: Arc<Context>,
     pub fence: vk::Fence,
     pub swapchain: Option<Swapchain>,
@@ -23,9 +26,10 @@ pub struct Renderer {
     pub allocator: Allocator,
     pub image_manager: ImageManager,
     pub descriptors: Descriptors,
+    pub sub_renderers: Vec<Box<dyn for<'s> SubRenderer<'s, State = SF::For<'s>>>>,
 }
 
-impl Renderer {
+impl<SF: StateFamily> Renderer<SF> {
     pub(crate) fn new(
         context: Arc<Context>,
         swapchain: Option<Swapchain>,
@@ -54,6 +58,7 @@ impl Renderer {
             allocator,
             image_manager,
             descriptors,
+            sub_renderers: Vec::new(),
         }
     }
 
@@ -73,14 +78,14 @@ impl Renderer {
         )
     }
 
-    pub fn draw<S>(&mut self, state: &S, sub_renderers: &mut [Box<dyn SubRenderer<State = S>>]) {
+    pub fn draw<'s>(&mut self, state: &SF::For<'s>) {
         // Begin rendering
-        let drawable = self.begin_rendering(state, sub_renderers);
+        let drawable = self.begin_rendering(state);
 
         // Draw with our sub-renderers
         self.context
             .begin_marker("Drawing", glam::vec4(0.0, 0.0, 1.0, 1.0));
-        for subrenderer in &mut *sub_renderers {
+        for subrenderer in &mut self.sub_renderers {
             self.context
                 .begin_marker(subrenderer.label(), glam::vec4(1.0, 0.0, 1.0, 1.0));
             let params = DrawParams::new(
@@ -100,7 +105,7 @@ impl Renderer {
         };
 
         // Draw layers
-        for subrenderer in &mut *sub_renderers {
+        for subrenderer in &mut self.sub_renderers {
             self.context
                 .begin_marker(subrenderer.label(), glam::vec4(1.0, 0.0, 1.0, 1.0));
             let params = DrawParams::new(
@@ -121,11 +126,7 @@ impl Renderer {
         }
     }
 
-    fn begin_rendering<S>(
-        &mut self,
-        state: &S,
-        sub_renderers: &mut [Box<dyn SubRenderer<State = S>>],
-    ) -> Drawable {
+    fn begin_rendering<'s>(&mut self, state: &SF::For<'s>) -> Drawable {
         // Get an image from our swapchain
         let drawable = self.get_drawable();
 
@@ -157,7 +158,7 @@ impl Renderer {
         // Stage transfers for this frame
         self.context
             .begin_marker("Stage Transfers", glam::vec4(1.0, 0.0, 1.0, 1.0));
-        for subrenderer in &mut *sub_renderers {
+        for subrenderer in &mut self.sub_renderers {
             subrenderer.stage_transfers(state, &mut self.allocator, &mut self.image_manager);
         }
         self.context.end_marker();
