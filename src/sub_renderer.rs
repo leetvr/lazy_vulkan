@@ -5,7 +5,16 @@ use crate::{
     ImageManager,
 };
 
-pub trait SubRenderer {
+/// A family of state types parameterized by a borrow lifetime.
+pub trait StateFamily {
+    type For<'s>;
+}
+
+impl StateFamily for () {
+    type For<'s> = ();
+}
+
+pub trait SubRenderer<'s> {
     type State;
 
     /// Used by debug-utils to provide additional information about operations on this subrenderer
