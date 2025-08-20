@@ -64,6 +64,11 @@ impl<SF: StateFamily> LazyVulkan<SF> {
         let drawable = self.renderer.get_drawable();
         self.renderer.begin_command_buffer();
         self.renderer.draw(state, &drawable);
+        self.renderer.submit_and_present(drawable);
+    }
+
+    pub fn begin_commands(&mut self) {
+        self.renderer.begin_command_buffer();
     }
 
     pub fn get_drawable(&mut self) -> Drawable {
@@ -80,6 +85,10 @@ impl<SF: StateFamily> LazyVulkan<SF> {
         sub_renderer: Box<dyn for<'s> SubRenderer<'s, State = SF::For<'s>>>,
     ) {
         self.renderer.sub_renderers.push(sub_renderer);
+    }
+
+    pub fn submit_and_present(&mut self, drawable: Drawable) {
+        self.renderer.submit_and_present(drawable);
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {

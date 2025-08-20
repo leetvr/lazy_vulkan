@@ -122,13 +122,15 @@ impl<SF: StateFamily> Renderer<SF> {
             subrenderer.draw_layer(state, &self.context, params);
             self.context.end_marker();
         }
+    }
 
+    pub fn submit_and_present(&mut self, drawable: Drawable) {
         // Transition the colour image to the present layout and submit all work
-        self.submit_rendering(drawable);
+        self.submit_rendering(&drawable);
 
         // Present
         if let SwapchainBackend::WSI(swapchain) = &self.swapchain {
-            swapchain.present(drawable, self.context.graphics_queue)
+            swapchain.present(drawable, self.context.graphics_queue);
         }
     }
 
@@ -283,7 +285,7 @@ impl<SF: StateFamily> Renderer<SF> {
         }
     }
 
-    fn submit_rendering(&self, drawable: Drawable) {
+    fn submit_rendering(&self, drawable: &Drawable) {
         let context = &self.context;
         let device = &context.device;
         let queue = context.graphics_queue;
