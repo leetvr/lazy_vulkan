@@ -9,7 +9,7 @@ pub struct Core {
     pub physical_device: vk::PhysicalDevice,
 }
 impl Core {
-    pub fn from_window(window: &winit::window::Window) -> Self {
+    pub(crate) fn from_window(window: &winit::window::Window) -> Self {
         let entry = unsafe { ash::Entry::load().unwrap() };
 
         let display_handle = window.display_handle().unwrap().as_raw();

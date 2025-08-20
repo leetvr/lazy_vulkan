@@ -1,15 +1,3 @@
-use std::{path::Path, sync::Arc, u64};
-
-use ash::vk::{self};
-
-use crate::{
-    descriptors::Descriptors,
-    draw_params::DrawParams,
-    image_manager::ImageManager,
-    sub_renderer::{StateFamily, SubRenderer},
-    Image, Pipeline,
-};
-
 use super::{
     allocator::Allocator,
     context::Context,
@@ -17,22 +5,37 @@ use super::{
     swapchain::{Drawable, Swapchain},
     FULL_IMAGE,
 };
+use crate::{
+    descriptors::Descriptors,
+    draw_params::DrawParams,
+    headless_swapchain::HeadlessSwapchain,
+    image_manager::ImageManager,
+    sub_renderer::{StateFamily, SubRenderer},
+    Image, Pipeline,
+};
+use ash::vk::{self};
+use std::{path::Path, sync::Arc, u64};
+
+enum SwapchainBackend {
+    WSI(Swapchain),
+    Headless(HeadlessSwapchain),
+}
 
 pub struct Renderer<SF: StateFamily> {
     pub context: Arc<Context>,
     pub fence: vk::Fence,
-    pub swapchain: Option<Swapchain>,
     pub depth_buffer: DepthBuffer,
     pub allocator: Allocator,
     pub image_manager: ImageManager,
     pub descriptors: Descriptors,
     pub sub_renderers: Vec<Box<dyn for<'s> SubRenderer<'s, State = SF::For<'s>>>>,
+    swapchain: SwapchainBackend,
 }
 
 impl<SF: StateFamily> Renderer<SF> {
-    pub(crate) fn new(
+    fn new(
         context: Arc<Context>,
-        swapchain: Option<Swapchain>,
+        swapchain: SwapchainBackend,
         drawable_size: vk::Extent2D,
     ) -> Self {
         let device = &context.device;
@@ -62,15 +65,19 @@ impl<SF: StateFamily> Renderer<SF> {
         }
     }
 
-    pub(crate) fn from_swapchain(context: Arc<Context>, swapchain: Swapchain) -> Self {
+    pub(crate) fn from_wsi(context: Arc<Context>, swapchain: Swapchain) -> Self {
         let extent = swapchain.extent;
-        Self::new(context, Some(swapchain), extent)
+        Self::new(context, SwapchainBackend::WSI(swapchain), extent)
     }
 
-    pub(crate) fn headless(context: Arc<Context>) -> Self {
+    pub(crate) fn headless(
+        context: Arc<Context>,
+        extent: vk::Extent2D,
+        format: vk::Format,
+    ) -> Self {
         Self::new(
-            context,
-            None,
+            context.clone(),
+            SwapchainBackend::Headless(HeadlessSwapchain::new(context, extent, format)),
             vk::Extent2D {
                 width: 1,
                 height: 1,
@@ -121,8 +128,8 @@ impl<SF: StateFamily> Renderer<SF> {
         self.submit_rendering(drawable);
 
         // Present
-        if let Some(swapchain) = &self.swapchain {
-            swapchain.present(drawable, self.context.graphics_queue);
+        if let SwapchainBackend::WSI(swapchain) = &self.swapchain {
+            swapchain.present(drawable, self.context.graphics_queue)
         }
     }
 
@@ -246,39 +253,41 @@ impl<SF: StateFamily> Renderer<SF> {
     }
 
     pub fn resize(&mut self, extent: vk::Extent2D) {
-        let Some(swapchain) = self.swapchain.as_mut() else {
-            unimplemented!("Headless rendering not implemented yet");
-        };
-
-        swapchain.extent = extent;
-        swapchain.needs_update = true;
+        match &mut self.swapchain {
+            SwapchainBackend::WSI(swapchain) => {
+                swapchain.extent = extent;
+                swapchain.needs_update = true;
+            }
+            SwapchainBackend::Headless(headless_swapchain) => headless_swapchain.resize(extent),
+        }
     }
 
     fn get_drawable(&mut self) -> Drawable {
         let device = &self.context.device;
 
-        let Some(swapchain) = self.swapchain.as_mut() else {
-            unimplemented!("Headless rendering not implemented yet");
-        };
+        match &mut self.swapchain {
+            SwapchainBackend::WSI(swapchain) => {
+                if swapchain.needs_update {
+                    unsafe { device.device_wait_idle().unwrap() };
+                    swapchain.resize(&self.context.device);
+                }
 
-        if swapchain.needs_update {
-            unsafe { device.device_wait_idle().unwrap() };
-            swapchain.resize(&self.context.device);
-        }
+                let drawable = loop {
+                    if let Some(drawable) = swapchain.get_drawable() {
+                        break drawable;
+                    }
 
-        let drawable = loop {
-            if let Some(drawable) = swapchain.get_drawable() {
-                break drawable;
+                    unsafe { device.device_wait_idle().unwrap() };
+                    swapchain.resize(&self.context.device);
+                };
+
+                // Recreate the depth buffer if the swapchain was resized
+                self.depth_buffer.validate(&self.context, swapchain);
+
+                drawable
             }
-
-            unsafe { device.device_wait_idle().unwrap() };
-            swapchain.resize(&self.context.device);
-        };
-
-        // Recreate the depth buffer if the swapchain was resized
-        self.depth_buffer.validate(&self.context, swapchain);
-
-        drawable
+            SwapchainBackend::Headless(headless_swapchain) => headless_swapchain.get_drawable(),
+        }
     }
 
     fn submit_rendering(&self, drawable: Drawable) {
@@ -309,6 +318,9 @@ impl<SF: StateFamily> Renderer<SF> {
             device.end_command_buffer(command_buffer).unwrap();
 
             // Submit the work to the queue
+            // TODO(kr): is this legal?
+            let image_available = drawable.image_available.unwrap_or(vk::Semaphore::null());
+
             context.queue_submit2(
                 queue,
                 &[vk::SubmitInfo2::default()
@@ -316,7 +328,7 @@ impl<SF: StateFamily> Renderer<SF> {
                         vk::CommandBufferSubmitInfo::default().command_buffer(command_buffer)
                     ])
                     .wait_semaphore_infos(&[vk::SemaphoreSubmitInfo::default()
-                        .semaphore(drawable.image_available)
+                        .semaphore(image_available)
                         .stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)])
                     .signal_semaphore_infos(&[vk::SemaphoreSubmitInfo::default()
                         .semaphore(drawable.rendering_complete)
@@ -357,18 +369,16 @@ impl<SF: StateFamily> Renderer<SF> {
     }
 
     pub fn get_drawable_format(&self) -> vk::Format {
-        if let Some(swapchain) = &self.swapchain {
-            return swapchain.format;
+        match &self.swapchain {
+            SwapchainBackend::WSI(swapchain) => swapchain.format,
+            SwapchainBackend::Headless(headless_swapchain) => headless_swapchain.format,
         }
-
-        unimplemented!("Headless rendering not implemented yet");
     }
 
     pub fn get_drawable_extent(&self) -> vk::Extent2D {
-        if let Some(swapchain) = &self.swapchain {
-            return swapchain.extent;
+        match &self.swapchain {
+            SwapchainBackend::WSI(swapchain) => swapchain.extent,
+            SwapchainBackend::Headless(headless_swapchain) => headless_swapchain.extent,
         }
-
-        unimplemented!("Headless rendering not implemented yet");
     }
 }

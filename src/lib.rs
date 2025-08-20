@@ -1,14 +1,13 @@
 pub use allocator::{Allocator, BufferAllocation, SlabUpload, TransferToken};
 pub use ash;
 pub use context::Context;
+pub use core::Core;
 pub use draw_params::DrawParams;
 pub use image_manager::{Image, ImageManager};
 pub use pipeline::Pipeline;
 pub use renderer::Renderer;
-pub use sub_renderer::{StateFamily, SubRenderer};
-
-use core::Core;
 use std::sync::Arc;
+pub use sub_renderer::{StateFamily, SubRenderer};
 
 use ash::vk;
 use swapchain::Swapchain;
@@ -19,6 +18,7 @@ mod core;
 mod depth_buffer;
 mod descriptors;
 mod draw_params;
+mod headless_swapchain;
 mod image_manager;
 mod pipeline;
 mod renderer;
@@ -26,19 +26,17 @@ mod sub_renderer;
 mod swapchain;
 
 pub struct LazyVulkan<SF: StateFamily> {
-    #[allow(unused)]
-    core: Core,
-    #[allow(unused)]
+    pub core: Arc<Core>,
     pub context: Arc<Context>,
     pub renderer: Renderer<SF>,
 }
 
 impl<SF: StateFamily> LazyVulkan<SF> {
     pub fn from_window(window: &winit::window::Window) -> Self {
-        let core = Core::from_window(window);
+        let core = Arc::new(Core::from_window(window));
         let context = Arc::new(Context::new_from_window(&core));
         let swapchain = Swapchain::new(&context.device, &core, window, vk::SwapchainKHR::null());
-        let renderer = Renderer::from_swapchain(context.clone(), swapchain);
+        let renderer = Renderer::from_wsi(context.clone(), swapchain);
 
         LazyVulkan {
             core,
@@ -47,10 +45,13 @@ impl<SF: StateFamily> LazyVulkan<SF> {
         }
     }
 
-    pub fn headless() -> Self {
-        let core = Core::headless();
-        let context = Arc::new(Context::new_headless(&core));
-        let renderer = Renderer::headless(context.clone());
+    pub fn headless(
+        core: Arc<Core>,
+        context: Arc<Context>,
+        extent: vk::Extent2D,
+        format: vk::Format,
+    ) -> Self {
+        let renderer = Renderer::headless(context.clone(), extent, format);
 
         LazyVulkan {
             core,

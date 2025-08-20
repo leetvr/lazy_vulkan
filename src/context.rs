@@ -37,7 +37,7 @@ impl Context {
         Context::new(core, device)
     }
 
-    pub(crate) fn new_headless(core: &Core) -> Context {
+    pub fn new_headless(core: &Core) -> Context {
         let instance = &core.instance;
         let physical_device = core.physical_device;
 
