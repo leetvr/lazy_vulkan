@@ -1,5 +1,7 @@
+pub use crate::swapchain::Drawable;
 pub use allocator::{Allocator, BufferAllocation, SlabUpload, TransferToken};
 pub use ash;
+use ash::vk;
 pub use context::Context;
 pub use core::Core;
 pub use draw_params::DrawParams;
@@ -8,8 +10,6 @@ pub use pipeline::Pipeline;
 pub use renderer::Renderer;
 use std::sync::Arc;
 pub use sub_renderer::{StateFamily, SubRenderer};
-
-use ash::vk;
 use swapchain::Swapchain;
 
 mod allocator;
@@ -61,7 +61,18 @@ impl<SF: StateFamily> LazyVulkan<SF> {
     }
 
     pub fn draw<'s>(&mut self, state: &SF::For<'s>) {
-        self.renderer.draw(state);
+        let drawable = self.renderer.get_drawable();
+        self.renderer.begin_command_buffer();
+        self.renderer.draw(state, &drawable);
+    }
+
+    pub fn get_drawable(&mut self) -> Drawable {
+        let drawable = self.renderer.get_drawable();
+        drawable
+    }
+
+    pub fn draw_to_drawable<'s>(&mut self, state: &SF::For<'s>, drawable: &Drawable) {
+        self.renderer.draw(state, &drawable);
     }
 
     pub fn add_sub_renderer(

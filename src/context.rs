@@ -101,6 +101,16 @@ impl Context {
         }
     }
 
+    pub fn begin_command_buffer(&self) {
+        unsafe {
+            self.device.begin_command_buffer(
+                self.draw_command_buffer,
+                &vk::CommandBufferBeginInfo::default(),
+            )
+        }
+        .unwrap()
+    }
+
     pub fn find_memory_type_index(
         &self,
         requirements: &MemoryRequirements,

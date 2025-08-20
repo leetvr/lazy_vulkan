@@ -78,16 +78,15 @@ impl<SF: StateFamily> Renderer<SF> {
         Self::new(
             context.clone(),
             SwapchainBackend::Headless(HeadlessSwapchain::new(context, extent, format)),
-            vk::Extent2D {
-                width: 1,
-                height: 1,
-            },
+            extent,
         )
     }
 
-    pub fn draw<'s>(&mut self, state: &SF::For<'s>) {
+    pub fn draw<'s>(&mut self, state: &SF::For<'s>, drawable: &Drawable) {
         // Begin rendering
-        let drawable = self.begin_rendering(state);
+        self.begin_rendering(state, drawable);
+
+        let drawable = drawable.clone(); // TODO
 
         // Draw with our sub-renderers
         self.context
@@ -133,16 +132,8 @@ impl<SF: StateFamily> Renderer<SF> {
         }
     }
 
-    fn begin_rendering<'s>(&mut self, state: &SF::For<'s>) -> Drawable {
-        // Get an image from our swapchain
-        let drawable = self.get_drawable();
-
-        let context = &self.context;
-        let device = &context.device;
-
-        // Get a `Drawable` from the swapchain
-        let render_area = drawable.extent;
-
+    pub fn begin_command_buffer(&mut self) {
+        let device = &self.context.device;
         // Block the CPU until we're done rendering the previous frame
         unsafe {
             device
@@ -151,14 +142,18 @@ impl<SF: StateFamily> Renderer<SF> {
             device.reset_fences(&[self.fence]).unwrap();
         }
 
-        // Begin the command buffer
-        let command_buffer = self.context.draw_command_buffer;
-        unsafe {
-            device
-                .begin_command_buffer(command_buffer, &vk::CommandBufferBeginInfo::default())
-                .unwrap()
-        };
+        self.context.begin_command_buffer();
+    }
 
+    pub fn begin_rendering<'s>(&mut self, state: &SF::For<'s>, drawable: &Drawable) {
+        let context = &self.context;
+        let device = &context.device;
+        let command_buffer = context.draw_command_buffer;
+
+        // Get a `Drawable` from the swapchain
+        let render_area = drawable.extent;
+
+        // Begin the command buffer
         self.context
             .begin_marker("Begin Rendering", glam::vec4(0.5, 0.5, 0., 1.));
 
@@ -248,8 +243,6 @@ impl<SF: StateFamily> Renderer<SF> {
         }
 
         self.context.end_marker();
-
-        drawable
     }
 
     pub fn resize(&mut self, extent: vk::Extent2D) {
@@ -262,7 +255,7 @@ impl<SF: StateFamily> Renderer<SF> {
         }
     }
 
-    fn get_drawable(&mut self) -> Drawable {
+    pub(crate) fn get_drawable(&mut self) -> Drawable {
         let device = &self.context.device;
 
         match &mut self.swapchain {
@@ -318,23 +311,35 @@ impl<SF: StateFamily> Renderer<SF> {
             device.end_command_buffer(command_buffer).unwrap();
 
             // Submit the work to the queue
-            // TODO(kr): is this legal?
-            let image_available = drawable.image_available.unwrap_or(vk::Semaphore::null());
-
-            context.queue_submit2(
-                queue,
-                &[vk::SubmitInfo2::default()
-                    .command_buffer_infos(&[
-                        vk::CommandBufferSubmitInfo::default().command_buffer(command_buffer)
-                    ])
-                    .wait_semaphore_infos(&[vk::SemaphoreSubmitInfo::default()
-                        .semaphore(image_available)
-                        .stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)])
-                    .signal_semaphore_infos(&[vk::SemaphoreSubmitInfo::default()
-                        .semaphore(drawable.rendering_complete)
-                        .stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)])],
-                self.fence,
-            );
+            // blegh
+            if let Some(image_available) = drawable.image_available {
+                context.queue_submit2(
+                    queue,
+                    &[vk::SubmitInfo2::default()
+                        .command_buffer_infos(&[
+                            vk::CommandBufferSubmitInfo::default().command_buffer(command_buffer)
+                        ])
+                        .wait_semaphore_infos(&[vk::SemaphoreSubmitInfo::default()
+                            .semaphore(image_available)
+                            .stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)])
+                        .signal_semaphore_infos(&[vk::SemaphoreSubmitInfo::default()
+                            .semaphore(drawable.rendering_complete)
+                            .stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)])],
+                    self.fence,
+                );
+            } else {
+                context.queue_submit2(
+                    queue,
+                    &[vk::SubmitInfo2::default()
+                        .command_buffer_infos(&[
+                            vk::CommandBufferSubmitInfo::default().command_buffer(command_buffer)
+                        ])
+                        .signal_semaphore_infos(&[vk::SemaphoreSubmitInfo::default()
+                            .semaphore(drawable.rendering_complete)
+                            .stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)])],
+                    self.fence,
+                );
+            }
         }
     }
 
