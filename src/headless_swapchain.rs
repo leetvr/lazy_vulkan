@@ -6,7 +6,7 @@ pub struct HeadlessSwapchain {
     pub context: Arc<Context>,
     pub extent: vk::Extent2D,
     pub format: vk::Format,
-    image: HeadlessSwapchainImage,
+    pub image: HeadlessSwapchainImage,
     render_complete: vk::Semaphore,
 }
 
@@ -50,10 +50,11 @@ impl HeadlessSwapchain {
     }
 }
 
-struct HeadlessSwapchainImage {
-    image: vk::Image,
-    memory: vk::DeviceMemory,
-    view: vk::ImageView,
+#[derive(Debug, Clone)]
+pub struct HeadlessSwapchainImage {
+    pub image: vk::Image,
+    pub memory: vk::DeviceMemory,
+    pub view: vk::ImageView,
 }
 
 impl HeadlessSwapchainImage {
@@ -130,6 +131,7 @@ impl HeadlessSwapchainImage {
             device.free_memory(self.memory, None);
         }
 
-        *self = Self::new(context, new_extent, format)
+        *self = Self::new(context, new_extent, format);
+        log::debug!("Resized! Image: {:?}", self.image);
     }
 }

@@ -131,7 +131,7 @@ impl<'a> ApplicationHandler for App {
 
             WindowEvent::Resized(size) => {
                 let state = self.state.as_mut().unwrap();
-                state.lazy_vulkan.resize(size.width, size.height);
+                state.lazy_vulkan.resize(size);
             }
             WindowEvent::RedrawRequested => {
                 let state = self.state.as_mut().unwrap();

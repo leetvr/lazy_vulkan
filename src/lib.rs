@@ -5,6 +5,7 @@ use ash::vk;
 pub use context::Context;
 pub use core::Core;
 pub use draw_params::DrawParams;
+pub use headless_swapchain::HeadlessSwapchainImage;
 pub use image_manager::{Image, ImageManager};
 pub use pipeline::Pipeline;
 pub use renderer::Renderer;
@@ -91,8 +92,8 @@ impl<SF: StateFamily> LazyVulkan<SF> {
         self.renderer.submit_and_present(drawable);
     }
 
-    pub fn resize(&mut self, width: u32, height: u32) {
-        self.renderer.resize(vk::Extent2D { width, height });
+    pub fn resize(&mut self, new_extent: impl IntoExtent) {
+        self.renderer.resize(new_extent.into_extent());
     }
 }
 
@@ -103,3 +104,22 @@ pub const FULL_IMAGE: vk::ImageSubresourceRange = vk::ImageSubresourceRange {
     base_array_layer: 0,
     layer_count: vk::REMAINING_ARRAY_LAYERS,
 };
+
+pub trait IntoExtent {
+    fn into_extent(self) -> vk::Extent2D;
+}
+
+impl IntoExtent for vk::Extent2D {
+    fn into_extent(self) -> vk::Extent2D {
+        self
+    }
+}
+
+impl IntoExtent for winit::dpi::PhysicalSize<u32> {
+    fn into_extent(self) -> vk::Extent2D {
+        vk::Extent2D {
+            width: self.width,
+            height: self.height,
+        }
+    }
+}

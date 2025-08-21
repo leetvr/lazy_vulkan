@@ -11,7 +11,7 @@ use crate::{
     headless_swapchain::HeadlessSwapchain,
     image_manager::ImageManager,
     sub_renderer::{StateFamily, SubRenderer},
-    Image, Pipeline,
+    HeadlessSwapchainImage, Image, Pipeline,
 };
 use ash::vk::{self};
 use std::{path::Path, sync::Arc, u64};
@@ -124,16 +124,6 @@ impl<SF: StateFamily> Renderer<SF> {
         }
     }
 
-    pub fn submit_and_present(&mut self, drawable: Drawable) {
-        // Transition the colour image to the present layout and submit all work
-        self.submit_rendering(&drawable);
-
-        // Present
-        if let SwapchainBackend::WSI(swapchain) = &self.swapchain {
-            swapchain.present(drawable, self.context.graphics_queue);
-        }
-    }
-
     pub fn begin_command_buffer(&mut self) {
         let device = &self.context.device;
         // Block the CPU until we're done rendering the previous frame
@@ -147,7 +137,17 @@ impl<SF: StateFamily> Renderer<SF> {
         self.context.begin_command_buffer();
     }
 
-    pub fn begin_rendering<'s>(&mut self, state: &SF::For<'s>, drawable: &Drawable) {
+    pub fn submit_and_present(&mut self, drawable: Drawable) {
+        // Transition the colour image to the present layout and submit all work
+        self.submit_rendering(&drawable);
+
+        // Present
+        if let SwapchainBackend::WSI(swapchain) = &self.swapchain {
+            swapchain.present(drawable, self.context.graphics_queue);
+        }
+    }
+
+    fn begin_rendering<'s>(&mut self, state: &SF::For<'s>, drawable: &Drawable) {
         let context = &self.context;
         let device = &context.device;
         let command_buffer = context.draw_command_buffer;
@@ -255,6 +255,8 @@ impl<SF: StateFamily> Renderer<SF> {
             }
             SwapchainBackend::Headless(headless_swapchain) => headless_swapchain.resize(extent),
         }
+
+        self.depth_buffer.resize(&self.context, extent);
     }
 
     pub(crate) fn get_drawable(&mut self) -> Drawable {
@@ -275,9 +277,6 @@ impl<SF: StateFamily> Renderer<SF> {
                     unsafe { device.device_wait_idle().unwrap() };
                     swapchain.resize(&self.context.device);
                 };
-
-                // Recreate the depth buffer if the swapchain was resized
-                self.depth_buffer.validate(&self.context, swapchain);
 
                 drawable
             }
@@ -386,6 +385,15 @@ impl<SF: StateFamily> Renderer<SF> {
         match &self.swapchain {
             SwapchainBackend::WSI(swapchain) => swapchain.extent,
             SwapchainBackend::Headless(headless_swapchain) => headless_swapchain.extent,
+        }
+    }
+
+    pub fn get_headless_image(&self) -> Option<HeadlessSwapchainImage> {
+        match &self.swapchain {
+            SwapchainBackend::Headless(headless_swapchain) => {
+                Some(headless_swapchain.image.clone())
+            }
+            _ => None,
         }
     }
 }

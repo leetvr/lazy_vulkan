@@ -8,6 +8,7 @@ pub struct Core {
     pub instance: ash::Instance,
     pub physical_device: vk::PhysicalDevice,
 }
+
 impl Core {
     pub(crate) fn from_window(window: &winit::window::Window) -> Self {
         let entry = unsafe { ash::Entry::load().unwrap() };
