@@ -118,7 +118,7 @@ impl Swapchain {
         Some(Drawable {
             image: self.images[index as usize],
             view: self.image_views[index as usize],
-            image_available,
+            image_available: Some(image_available),
             index,
             extent: self.extent,
             rendering_complete: self.rendering_complete_semaphores[index as usize],
@@ -233,7 +233,7 @@ fn build_swapchain(
 pub struct Drawable {
     pub image: vk::Image,
     pub view: vk::ImageView,
-    pub image_available: vk::Semaphore,
+    pub image_available: Option<vk::Semaphore>,
     pub rendering_complete: vk::Semaphore,
     pub index: u32,
     pub extent: vk::Extent2D,

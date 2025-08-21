@@ -1,15 +1,3 @@
-use std::{path::Path, sync::Arc, u64};
-
-use ash::vk::{self};
-
-use crate::{
-    descriptors::Descriptors,
-    draw_params::DrawParams,
-    image_manager::ImageManager,
-    sub_renderer::{StateFamily, SubRenderer},
-    Image, Pipeline,
-};
-
 use super::{
     allocator::Allocator,
     context::Context,
@@ -17,22 +5,37 @@ use super::{
     swapchain::{Drawable, Swapchain},
     FULL_IMAGE,
 };
+use crate::{
+    descriptors::Descriptors,
+    draw_params::DrawParams,
+    headless_swapchain::HeadlessSwapchain,
+    image_manager::ImageManager,
+    sub_renderer::{StateFamily, SubRenderer},
+    HeadlessSwapchainImage, Image, Pipeline,
+};
+use ash::vk::{self};
+use std::{path::Path, sync::Arc, u64};
+
+enum SwapchainBackend {
+    WSI(Swapchain),
+    Headless(HeadlessSwapchain),
+}
 
 pub struct Renderer<SF: StateFamily> {
     pub context: Arc<Context>,
     pub fence: vk::Fence,
-    pub swapchain: Option<Swapchain>,
     pub depth_buffer: DepthBuffer,
     pub allocator: Allocator,
     pub image_manager: ImageManager,
     pub descriptors: Descriptors,
     pub sub_renderers: Vec<Box<dyn for<'s> SubRenderer<'s, State = SF::For<'s>>>>,
+    swapchain: SwapchainBackend,
 }
 
 impl<SF: StateFamily> Renderer<SF> {
-    pub(crate) fn new(
+    fn new(
         context: Arc<Context>,
-        swapchain: Option<Swapchain>,
+        swapchain: SwapchainBackend,
         drawable_size: vk::Extent2D,
     ) -> Self {
         let device = &context.device;
@@ -62,25 +65,28 @@ impl<SF: StateFamily> Renderer<SF> {
         }
     }
 
-    pub(crate) fn from_swapchain(context: Arc<Context>, swapchain: Swapchain) -> Self {
+    pub(crate) fn from_wsi(context: Arc<Context>, swapchain: Swapchain) -> Self {
         let extent = swapchain.extent;
-        Self::new(context, Some(swapchain), extent)
+        Self::new(context, SwapchainBackend::WSI(swapchain), extent)
     }
 
-    pub(crate) fn headless(context: Arc<Context>) -> Self {
+    pub(crate) fn headless(
+        context: Arc<Context>,
+        extent: vk::Extent2D,
+        format: vk::Format,
+    ) -> Self {
         Self::new(
-            context,
-            None,
-            vk::Extent2D {
-                width: 1,
-                height: 1,
-            },
+            context.clone(),
+            SwapchainBackend::Headless(HeadlessSwapchain::new(context, extent, format)),
+            extent,
         )
     }
 
-    pub fn draw<'s>(&mut self, state: &SF::For<'s>) {
+    pub fn draw<'s>(&mut self, state: &SF::For<'s>, drawable: &Drawable) {
         // Begin rendering
-        let drawable = self.begin_rendering(state);
+        self.begin_rendering(state, drawable);
+
+        let drawable = drawable.clone(); // TODO
 
         // Draw with our sub-renderers
         self.context
@@ -116,26 +122,10 @@ impl<SF: StateFamily> Renderer<SF> {
             subrenderer.draw_layer(state, &self.context, params);
             self.context.end_marker();
         }
-
-        // Transition the colour image to the present layout and submit all work
-        self.submit_rendering(drawable);
-
-        // Present
-        if let Some(swapchain) = &self.swapchain {
-            swapchain.present(drawable, self.context.graphics_queue);
-        }
     }
 
-    fn begin_rendering<'s>(&mut self, state: &SF::For<'s>) -> Drawable {
-        // Get an image from our swapchain
-        let drawable = self.get_drawable();
-
-        let context = &self.context;
-        let device = &context.device;
-
-        // Get a `Drawable` from the swapchain
-        let render_area = drawable.extent;
-
+    pub fn begin_command_buffer(&mut self) {
+        let device = &self.context.device;
         // Block the CPU until we're done rendering the previous frame
         unsafe {
             device
@@ -144,14 +134,28 @@ impl<SF: StateFamily> Renderer<SF> {
             device.reset_fences(&[self.fence]).unwrap();
         }
 
-        // Begin the command buffer
-        let command_buffer = self.context.draw_command_buffer;
-        unsafe {
-            device
-                .begin_command_buffer(command_buffer, &vk::CommandBufferBeginInfo::default())
-                .unwrap()
-        };
+        self.context.begin_command_buffer();
+    }
 
+    pub fn submit_and_present(&mut self, drawable: Drawable) {
+        // Transition the colour image to the present layout and submit all work
+        self.submit_rendering(&drawable);
+
+        // Present
+        if let SwapchainBackend::WSI(swapchain) = &self.swapchain {
+            swapchain.present(drawable, self.context.graphics_queue);
+        }
+    }
+
+    fn begin_rendering<'s>(&mut self, state: &SF::For<'s>, drawable: &Drawable) {
+        let context = &self.context;
+        let device = &context.device;
+        let command_buffer = context.draw_command_buffer;
+
+        // Get a `Drawable` from the swapchain
+        let render_area = drawable.extent;
+
+        // Begin the command buffer
         self.context
             .begin_marker("Begin Rendering", glam::vec4(0.5, 0.5, 0., 1.));
 
@@ -241,47 +245,46 @@ impl<SF: StateFamily> Renderer<SF> {
         }
 
         self.context.end_marker();
-
-        drawable
     }
 
     pub fn resize(&mut self, extent: vk::Extent2D) {
-        let Some(swapchain) = self.swapchain.as_mut() else {
-            unimplemented!("Headless rendering not implemented yet");
-        };
-
-        swapchain.extent = extent;
-        swapchain.needs_update = true;
-    }
-
-    fn get_drawable(&mut self) -> Drawable {
-        let device = &self.context.device;
-
-        let Some(swapchain) = self.swapchain.as_mut() else {
-            unimplemented!("Headless rendering not implemented yet");
-        };
-
-        if swapchain.needs_update {
-            unsafe { device.device_wait_idle().unwrap() };
-            swapchain.resize(&self.context.device);
+        match &mut self.swapchain {
+            SwapchainBackend::WSI(swapchain) => {
+                swapchain.extent = extent;
+                swapchain.needs_update = true;
+            }
+            SwapchainBackend::Headless(headless_swapchain) => headless_swapchain.resize(extent),
         }
 
-        let drawable = loop {
-            if let Some(drawable) = swapchain.get_drawable() {
-                break drawable;
-            }
-
-            unsafe { device.device_wait_idle().unwrap() };
-            swapchain.resize(&self.context.device);
-        };
-
-        // Recreate the depth buffer if the swapchain was resized
-        self.depth_buffer.validate(&self.context, swapchain);
-
-        drawable
+        self.depth_buffer.resize(&self.context, extent);
     }
 
-    fn submit_rendering(&self, drawable: Drawable) {
+    pub(crate) fn get_drawable(&mut self) -> Drawable {
+        let device = &self.context.device;
+
+        match &mut self.swapchain {
+            SwapchainBackend::WSI(swapchain) => {
+                if swapchain.needs_update {
+                    unsafe { device.device_wait_idle().unwrap() };
+                    swapchain.resize(&self.context.device);
+                }
+
+                let drawable = loop {
+                    if let Some(drawable) = swapchain.get_drawable() {
+                        break drawable;
+                    }
+
+                    unsafe { device.device_wait_idle().unwrap() };
+                    swapchain.resize(&self.context.device);
+                };
+
+                drawable
+            }
+            SwapchainBackend::Headless(headless_swapchain) => headless_swapchain.get_drawable(),
+        }
+    }
+
+    fn submit_rendering(&self, drawable: &Drawable) {
         let context = &self.context;
         let device = &context.device;
         let queue = context.graphics_queue;
@@ -309,20 +312,35 @@ impl<SF: StateFamily> Renderer<SF> {
             device.end_command_buffer(command_buffer).unwrap();
 
             // Submit the work to the queue
-            context.queue_submit2(
-                queue,
-                &[vk::SubmitInfo2::default()
-                    .command_buffer_infos(&[
-                        vk::CommandBufferSubmitInfo::default().command_buffer(command_buffer)
-                    ])
-                    .wait_semaphore_infos(&[vk::SemaphoreSubmitInfo::default()
-                        .semaphore(drawable.image_available)
-                        .stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)])
-                    .signal_semaphore_infos(&[vk::SemaphoreSubmitInfo::default()
-                        .semaphore(drawable.rendering_complete)
-                        .stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)])],
-                self.fence,
-            );
+            // blegh
+            if let Some(image_available) = drawable.image_available {
+                context.queue_submit2(
+                    queue,
+                    &[vk::SubmitInfo2::default()
+                        .command_buffer_infos(&[
+                            vk::CommandBufferSubmitInfo::default().command_buffer(command_buffer)
+                        ])
+                        .wait_semaphore_infos(&[vk::SemaphoreSubmitInfo::default()
+                            .semaphore(image_available)
+                            .stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)])
+                        .signal_semaphore_infos(&[vk::SemaphoreSubmitInfo::default()
+                            .semaphore(drawable.rendering_complete)
+                            .stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)])],
+                    self.fence,
+                );
+            } else {
+                context.queue_submit2(
+                    queue,
+                    &[vk::SubmitInfo2::default()
+                        .command_buffer_infos(&[
+                            vk::CommandBufferSubmitInfo::default().command_buffer(command_buffer)
+                        ])
+                        .signal_semaphore_infos(&[vk::SemaphoreSubmitInfo::default()
+                            .semaphore(drawable.rendering_complete)
+                            .stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)])],
+                    self.fence,
+                );
+            }
         }
     }
 
@@ -357,18 +375,25 @@ impl<SF: StateFamily> Renderer<SF> {
     }
 
     pub fn get_drawable_format(&self) -> vk::Format {
-        if let Some(swapchain) = &self.swapchain {
-            return swapchain.format;
+        match &self.swapchain {
+            SwapchainBackend::WSI(swapchain) => swapchain.format,
+            SwapchainBackend::Headless(headless_swapchain) => headless_swapchain.format,
         }
-
-        unimplemented!("Headless rendering not implemented yet");
     }
 
     pub fn get_drawable_extent(&self) -> vk::Extent2D {
-        if let Some(swapchain) = &self.swapchain {
-            return swapchain.extent;
+        match &self.swapchain {
+            SwapchainBackend::WSI(swapchain) => swapchain.extent,
+            SwapchainBackend::Headless(headless_swapchain) => headless_swapchain.extent,
         }
+    }
 
-        unimplemented!("Headless rendering not implemented yet");
+    pub fn get_headless_image(&self) -> Option<HeadlessSwapchainImage> {
+        match &self.swapchain {
+            SwapchainBackend::Headless(headless_swapchain) => {
+                Some(headless_swapchain.image.clone())
+            }
+            _ => None,
+        }
     }
 }

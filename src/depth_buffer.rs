@@ -76,8 +76,8 @@ impl DepthBuffer {
         }
     }
 
-    pub fn validate(&mut self, context: &Context, swapchain: &Swapchain) {
-        if swapchain.extent == self.extent {
+    pub fn resize(&mut self, context: &Context, new_extent: vk::Extent2D) {
+        if new_extent == self.extent {
             // Sizes are identical, nothing to do.
             return;
         }
@@ -85,7 +85,7 @@ impl DepthBuffer {
         unsafe { context.device.device_wait_idle().unwrap() };
 
         unsafe { self.destroy(context) };
-        *self = DepthBuffer::new(context, swapchain.extent)
+        *self = DepthBuffer::new(context, new_extent)
     }
 
     unsafe fn destroy(&self, context: &Context) {

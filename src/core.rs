@@ -8,8 +8,9 @@ pub struct Core {
     pub instance: ash::Instance,
     pub physical_device: vk::PhysicalDevice,
 }
+
 impl Core {
-    pub fn from_window(window: &winit::window::Window) -> Self {
+    pub(crate) fn from_window(window: &winit::window::Window) -> Self {
         let entry = unsafe { ash::Entry::load().unwrap() };
 
         let display_handle = window.display_handle().unwrap().as_raw();
@@ -72,8 +73,9 @@ impl Core {
     pub fn headless() -> Self {
         let entry = unsafe { ash::Entry::load().unwrap() };
 
-        #[allow(unused_mut)]
         let mut instance_extensions = Vec::new();
+
+        instance_extensions.push(ash::ext::debug_utils::NAME.as_ptr());
         let version;
         let instance_create_flags;
 
