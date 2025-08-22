@@ -3,6 +3,7 @@ use winit::raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 
 pub struct Swapchain {
     pub surface_handle: vk::SurfaceKHR,
+    #[allow(unused)]
     pub surface_fn: ash::khr::surface::Instance,
     pub swapchain_handle: vk::SwapchainKHR,
     pub swapchain_fn: ash::khr::swapchain::Device,

@@ -1,6 +1,6 @@
 use ash::vk;
 
-use super::{context::Context, swapchain::Swapchain};
+use super::context::Context;
 
 #[derive(Debug, Copy, Clone)]
 pub struct DepthBuffer {
