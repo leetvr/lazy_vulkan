@@ -50,14 +50,14 @@ impl DeviceBuffer {
         context: &Context,
         mut pending_transfers: Vec<PendingTransfer>,
         staging_buffer: &mut StagingBuffer,
+        command_buffer: vk::CommandBuffer,
     ) {
         for pending in pending_transfers.drain(..) {
             match pending.destination {
                 TransferDestination::Slab | TransferDestination::Buffer(_) => {
                     match self {
-                        DeviceBuffer::Discrete(discrete_allocator) => {
-                            discrete_allocator.buffer_transfer(context, pending, staging_buffer)
-                        }
+                        DeviceBuffer::Discrete(discrete_allocator) => discrete_allocator
+                            .buffer_transfer(context, pending, staging_buffer, command_buffer),
                         DeviceBuffer::Integrated(integrated_allocator) => {
                             integrated_allocator.buffer_transfer(pending, staging_buffer)
                         }
@@ -65,7 +65,6 @@ impl DeviceBuffer {
                 }
                 TransferDestination::Image(image, extent) => {
                     let device = &context.device;
-                    let command_buffer = context.draw_command_buffer;
 
                     unsafe {
                         context.cmd_pipeline_barrier2(
@@ -184,10 +183,10 @@ impl DiscreteDeviceBuffer {
             ..
         }: PendingTransfer,
         staging_buffer: &mut StagingBuffer,
+        command_buffer: vk::CommandBuffer,
     ) {
         context.begin_marker("Buffer Transfer", glam::vec4(0., 1., 1., 1.));
         let device = &context.device;
-        let command_buffer = context.draw_command_buffer;
 
         let (allocation_offset, buffer) = match destination {
             TransferDestination::Buffer(buffer) => (allocation_offset, buffer),

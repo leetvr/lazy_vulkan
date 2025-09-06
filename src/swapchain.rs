@@ -188,7 +188,9 @@ fn build_swapchain(
                 .image_extent(extent)
                 .image_color_space(vk::ColorSpaceKHR::SRGB_NONLINEAR)
                 .image_array_layers(1)
-                .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT)
+                .image_usage(
+                    vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_DST,
+                )
                 .image_sharing_mode(vk::SharingMode::EXCLUSIVE)
                 .queue_family_indices(&[0])
                 .clipped(true)

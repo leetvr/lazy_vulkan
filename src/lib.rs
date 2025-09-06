@@ -7,7 +7,7 @@ pub use core::Core;
 pub use draw_params::DrawParams;
 pub use headless_swapchain::HeadlessSwapchainImage;
 pub use image_manager::{Image, ImageManager};
-pub use pipeline::Pipeline;
+pub use pipeline::{load_module, Pipeline};
 pub use renderer::Renderer;
 use std::sync::Arc;
 pub use sub_renderer::{StateFamily, SubRenderer};

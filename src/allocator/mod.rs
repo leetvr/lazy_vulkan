@@ -44,6 +44,7 @@ impl Allocator {
         }
     }
 
+    /// Allocates a buffer of `max_size`
     pub fn allocate_buffer<T: Sized>(
         &mut self,
         max_size: usize,
@@ -51,13 +52,6 @@ impl Allocator {
     ) -> BufferAllocation<T> {
         let device = &self.context.device;
         let device_size = (max_size * std::mem::size_of::<T>()) as vk::DeviceSize;
-
-        // Allocate an offset into our device local memory
-        // TODO: alignment
-        let offset = self
-            .offset_allocator
-            .allocate(device_size as u32)
-            .expect("Unable to allocate memory. This should be impossible!");
 
         // Create the buffer
         let handle = unsafe {
@@ -72,6 +66,56 @@ impl Allocator {
         }
         .unwrap();
 
+        let memory_requirements = unsafe { device.get_buffer_memory_requirements(handle) };
+        let align = memory_requirements.alignment;
+        let size = memory_requirements.size;
+
+        self.allocate_buffer_inner(align, handle, size)
+    }
+
+    pub fn allocate_buffer_with_alignment<T: Sized>(
+        &mut self,
+        max_size: usize,
+        align: u64,
+        usage_flags: vk::BufferUsageFlags,
+    ) -> BufferAllocation<T> {
+        let device = &self.context.device;
+        let device_size = (max_size * std::mem::size_of::<T>()) as vk::DeviceSize;
+
+        // Create the buffer
+        let handle = unsafe {
+            device.create_buffer(
+                &vk::BufferCreateInfo::default().size(device_size).usage(
+                    usage_flags
+                        | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
+                        | vk::BufferUsageFlags::TRANSFER_DST,
+                ),
+                None,
+            )
+        }
+        .unwrap();
+
+        let memory_requirements = unsafe { device.get_buffer_memory_requirements(handle) };
+        let size = memory_requirements.size;
+
+        self.allocate_buffer_inner(align, handle, size)
+    }
+
+    fn allocate_buffer_inner<T: Sized>(
+        &mut self,
+        align: u64,
+        handle: vk::Buffer,
+        size: u64,
+    ) -> BufferAllocation<T> {
+        let device = &self.context.device;
+        let reserve = size + (align - 1);
+
+        // Allocate an offset into our device local memory
+        let offset = self
+            .offset_allocator
+            .allocate(reserve as u32)
+            .expect("Unable to allocate memory. This should be impossible!");
+
         let label = format!(
             "[lazy_vulkan] BufferAllocation<{}> at offset {}",
             std::any::type_name::<T>(),
@@ -79,11 +123,18 @@ impl Allocator {
         );
         self.context.set_debug_label(handle, &label);
 
+        // Align the offset before binding
+        let bind_offset = align_offset(align, offset);
+
+        let pad = bind_offset - offset.offset as u64;
+        println!(
+            "size: {size}, align: {align}, reserve: {reserve}, offset: {}, bind_offset: {bind_offset}, pad: {pad}",
+            offset.offset
+        );
+
         // Bind its memory
-        unsafe {
-            device.bind_buffer_memory(handle, self.backend.device_memory(), offset.offset as _)
-        }
-        .unwrap();
+        unsafe { device.bind_buffer_memory(handle, self.backend.device_memory(), bind_offset) }
+            .unwrap();
 
         // Get its device address
         let device_address = unsafe {
@@ -91,7 +142,7 @@ impl Allocator {
         };
 
         BufferAllocation {
-            max_device_size: device_size,
+            size,
             device_address,
             len: 0,
             handle,
@@ -109,39 +160,44 @@ impl Allocator {
         let device = &self.context.device;
         let memory_requirements = unsafe { device.get_image_memory_requirements(image) };
         let size = memory_requirements.size;
+        let align = memory_requirements.alignment;
+        let reserve = size + (align - 1);
 
         // Allocate an offset into our device local memory
         let global_offset = self
             .offset_allocator
-            .allocate(size as u32)
+            .allocate(reserve as u32)
             .expect("Unable to allocate memory. This should be impossible!");
 
+        let bind_offset = align_offset(align, global_offset);
+
         // Bind the image to the memory at this offset
-        unsafe {
-            device.bind_image_memory(
-                image,
-                self.backend.device_memory(),
-                global_offset.offset as _,
-            )
-        }
-        .unwrap();
+        unsafe { device.bind_image_memory(image, self.backend.device_memory(), bind_offset) }
+            .unwrap();
 
         // Stage the transfer
         let (ours, theirs) = TransferToken::create_pair();
-        let staging_buffer_offset = self.staging_buffer.stage(data);
-        self.pending_transfers.push(PendingTransfer {
-            destination: TransferDestination::Image(image, extent),
-            transfer_size: data.len() as _,
-            transfer_token: ours,
-            staging_buffer_offset,
-            global_offset,
-            allocation_offset: 0,
-        });
+
+        if !data.is_empty() {
+            let staging_buffer_offset = self.staging_buffer.stage(data);
+            self.pending_transfers.push(PendingTransfer {
+                destination: TransferDestination::Image(image, extent),
+                transfer_size: data.len() as _,
+                transfer_token: ours,
+                staging_buffer_offset,
+                global_offset,
+                allocation_offset: 0,
+            });
+        } else {
+            // No data? Nothing to do
+            ours.mark_completed();
+            theirs.mark_completed();
+        }
 
         theirs
     }
 
-    pub fn append_to_buffer<T: bytemuck::Pod + Debug>(
+    pub fn append_to_buffer<T: bytemuck::Pod>(
         &mut self,
         data: &[T],
         allocation: &mut BufferAllocation<T>,
@@ -165,13 +221,14 @@ impl Allocator {
         theirs
     }
 
-    pub fn execute_transfers(&mut self) {
+    pub fn execute_transfers(&mut self, command_buffer: vk::CommandBuffer) {
         self.context
             .begin_marker("Execute Transfers", glam::vec4(0., 0., 1., 1.));
         self.backend.execute_transfers(
             &self.context,
             std::mem::take(&mut self.pending_transfers),
             &mut self.staging_buffer,
+            command_buffer,
         );
         self.context.end_marker();
     }
@@ -216,6 +273,35 @@ impl Allocator {
     pub fn free_from_slab<T: Sized>(&mut self, _allocation: BufferAllocation<T>) {
         unimplemented!("Free is not yet implemented");
     }
+
+    pub unsafe fn append_unsafe<T: Copy>(
+        &mut self,
+        data: &[T],
+        allocation: &mut BufferAllocation<T>,
+    ) -> TransferToken {
+        let bytes =
+            std::slice::from_raw_parts(data.as_ptr() as *const u8, std::mem::size_of_val(data));
+        let staging_buffer_offset = self.staging_buffer.stage(bytes);
+
+        let (ours, theirs) = TransferToken::create_pair();
+
+        self.pending_transfers.push(PendingTransfer {
+            destination: TransferDestination::Buffer(allocation.handle),
+            staging_buffer_offset,
+            transfer_size: bytes.len() as _,
+            global_offset: allocation.global_offset,
+            transfer_token: ours,
+            allocation_offset: allocation.len(),
+        });
+
+        allocation.len += data.len();
+
+        theirs
+    }
+}
+
+fn align_offset(align: u64, offset: offset_allocator::Allocation) -> u64 {
+    (offset.offset as u64 + align - 1) & !(align - 1)
 }
 
 #[derive(Clone)]
@@ -272,7 +358,7 @@ enum TransferDestination {
 pub struct PendingFree;
 pub struct BufferAllocation<T> {
     #[allow(unused)]
-    pub max_device_size: vk::DeviceSize,
+    pub size: vk::DeviceSize,
     pub device_address: vk::DeviceAddress,
     pub handle: vk::Buffer,
     len: usize, // number of `T`s in this buffer
@@ -280,13 +366,27 @@ pub struct BufferAllocation<T> {
     global_offset: offset_allocator::Allocation, // offset into the global memory
     _phantom: PhantomData<T>,
 }
-
-impl<T> BufferAllocation<T> {
+impl<T> BufferAllocation<T>
+where
+    T: Copy,
+{
     pub fn len(&self) -> usize {
         self.len
     }
 
     pub fn clear(&mut self) {
         self.len = 0;
+    }
+    pub unsafe fn append_unsafe(&mut self, data: &[T], allocator: &mut Allocator) {
+        allocator.append_unsafe(data, self);
+    }
+}
+
+impl<T> BufferAllocation<T>
+where
+    T: bytemuck::Pod,
+{
+    pub fn append(&mut self, data: &[T], allocator: &mut Allocator) {
+        allocator.append_to_buffer(data, self);
     }
 }

@@ -17,10 +17,23 @@ pub struct Context {
     pub device_type: vk::PhysicalDeviceType,
     pub device_properties: vk::PhysicalDeviceProperties,
     debug_utils: Option<ash::ext::debug_utils::Device>,
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    #[cfg(target_vendor = "apple")]
     pub dynamic_rendering_pfn: ash::khr::dynamic_rendering::Device,
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    #[cfg(target_vendor = "apple")]
     pub sync2_pfn: ash::khr::synchronization2::Device,
+    #[cfg(not(target_vendor = "apple"))]
+    pub acceleration_structure_pfn: ash::khr::acceleration_structure::Device,
+    #[cfg(not(target_vendor = "apple"))]
+    pub ray_tracing_pipeline_pfn: ash::khr::ray_tracing_pipeline::Device,
+    #[cfg(not(target_vendor = "apple"))]
+    pub raytracing_properties: RaytracingProperties,
+}
+
+pub struct RaytracingProperties {
+    pub min_acceleration_structure_scratch_offset_alignment: u32,
+    pub shader_group_handle_size: u32,
+    pub shader_group_handle_alignment: u32,
+    pub shader_group_base_alignment: u32,
 }
 
 impl Context {
@@ -82,6 +95,42 @@ impl Context {
         #[cfg(any(target_os = "macos", target_os = "ios"))]
         let sync2_pfn = ash::khr::synchronization2::Device::new(&core.instance, &device);
 
+        #[cfg(not(target_vendor = "apple"))]
+        let acceleration_structure_pfn =
+            ash::khr::acceleration_structure::Device::new(&core.instance, &device);
+
+        #[cfg(not(target_vendor = "apple"))]
+        let ray_tracing_pipeline_pfn =
+            ash::khr::ray_tracing_pipeline::Device::new(&core.instance, &device);
+
+        #[cfg(not(target_vendor = "apple"))]
+        let mut ray_tracing_properties =
+            vk::PhysicalDeviceRayTracingPipelinePropertiesKHR::default();
+
+        #[cfg(not(target_vendor = "apple"))]
+        let mut acceleration_structure_properties =
+            vk::PhysicalDeviceAccelerationStructurePropertiesKHR::default();
+
+        let mut properties = vk::PhysicalDeviceProperties2::default();
+
+        #[cfg(not(target_vendor = "apple"))]
+        {
+            properties = properties
+                .push_next(&mut ray_tracing_properties)
+                .push_next(&mut acceleration_structure_properties);
+        }
+
+        unsafe { instance.get_physical_device_properties2(physical_device, &mut properties) };
+
+        #[cfg(not(target_vendor = "apple"))]
+        let raytracing_properties = RaytracingProperties {
+            min_acceleration_structure_scratch_offset_alignment: acceleration_structure_properties
+                .min_acceleration_structure_scratch_offset_alignment,
+            shader_group_handle_alignment: ray_tracing_properties.shader_group_handle_alignment,
+            shader_group_handle_size: ray_tracing_properties.shader_group_handle_size,
+            shader_group_base_alignment: ray_tracing_properties.shader_group_base_alignment,
+        };
+
         // TODO: Make this dependent on an env var or something
         let debug_utils = Some(ash::ext::debug_utils::Device::new(&core.instance, &device));
 
@@ -98,6 +147,11 @@ impl Context {
             dynamic_rendering_pfn,
             #[cfg(any(target_os = "macos", target_os = "ios"))]
             sync2_pfn,
+            #[cfg(not(target_vendor = "apple"))]
+            acceleration_structure_pfn,
+            #[cfg(not(target_vendor = "apple"))]
+            ray_tracing_pipeline_pfn,
+            raytracing_properties,
         }
     }
 
@@ -301,6 +355,10 @@ fn create_device(
     physical_device: vk::PhysicalDevice,
     enabled_extension_names: &mut Vec<*const c_char>,
 ) -> ash::Device {
+    enabled_extension_names.push(ash::khr::acceleration_structure::NAME.as_ptr());
+    enabled_extension_names.push(ash::khr::ray_tracing_pipeline::NAME.as_ptr());
+    enabled_extension_names.push(ash::khr::deferred_host_operations::NAME.as_ptr());
+
     let device = unsafe {
         instance.create_device(
             physical_device,
@@ -315,9 +373,9 @@ fn create_device(
                         .sampler_anisotropy(true),
                 )
                 .push_next(
-                    &mut vk::PhysicalDeviceVulkan13Features::default()
-                        .dynamic_rendering(true)
-                        .synchronization2(true),
+                    &mut vk::PhysicalDeviceVulkan11Features::default()
+                        .variable_pointers(true)
+                        .variable_pointers_storage_buffer(true),
                 )
                 .push_next(
                     &mut vk::PhysicalDeviceVulkan12Features::default()
@@ -329,9 +387,17 @@ fn create_device(
                         .buffer_device_address(true),
                 )
                 .push_next(
-                    &mut vk::PhysicalDeviceVulkan11Features::default()
-                        .variable_pointers(true)
-                        .variable_pointers_storage_buffer(true),
+                    &mut vk::PhysicalDeviceVulkan13Features::default()
+                        .dynamic_rendering(true)
+                        .synchronization2(true),
+                )
+                .push_next(
+                    &mut vk::PhysicalDeviceAccelerationStructureFeaturesKHR::default()
+                        .acceleration_structure(true),
+                )
+                .push_next(
+                    &mut vk::PhysicalDeviceRayTracingPipelineFeaturesKHR::default()
+                        .ray_tracing_pipeline(true),
                 ),
             None,
         )

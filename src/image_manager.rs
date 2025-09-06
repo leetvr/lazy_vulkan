@@ -37,6 +37,12 @@ impl ImageManager {
         image_bytes: impl AsRef<[u8]>,
         image_usage_flags: vk::ImageUsageFlags,
     ) -> Image {
+        let id = if image_usage_flags.contains(vk::ImageUsageFlags::SAMPLED) {
+            self.allocate_id()
+        } else {
+            0
+        };
+
         let device = &self.context.device;
         let image_bytes = image_bytes.as_ref();
 
@@ -73,24 +79,26 @@ impl ImageManager {
         }
         .unwrap();
 
-        let max_anisotropy = self.context.device_properties.limits.max_sampler_anisotropy;
+        let mut sampler = vk::Sampler::null();
 
-        let sampler = unsafe {
-            device.create_sampler(
-                &vk::SamplerCreateInfo::default()
-                    .min_filter(vk::Filter::LINEAR)
-                    .mag_filter(vk::Filter::LINEAR)
-                    .address_mode_u(vk::SamplerAddressMode::REPEAT)
-                    .address_mode_v(vk::SamplerAddressMode::REPEAT)
-                    .anisotropy_enable(true)
-                    .max_anisotropy(max_anisotropy),
-                None,
-            )
+        if image_usage_flags.contains(vk::ImageUsageFlags::SAMPLED) {
+            sampler = unsafe {
+                device.create_sampler(
+                    &vk::SamplerCreateInfo::default()
+                        .min_filter(vk::Filter::LINEAR)
+                        .mag_filter(vk::Filter::LINEAR)
+                        .address_mode_u(vk::SamplerAddressMode::REPEAT)
+                        .address_mode_v(vk::SamplerAddressMode::REPEAT)
+                        .anisotropy_enable(true)
+                        .max_anisotropy(
+                            self.context.device_properties.limits.max_sampler_anisotropy,
+                        ),
+                    None,
+                )
+            }
+            .unwrap();
+            unsafe { self.update_texture_descriptor_set(id, view, sampler) };
         }
-        .unwrap();
-
-        let id = self.allocate_id();
-        unsafe { self.update_texture_descriptor_set(id, view, sampler) };
 
         Image {
             handle,

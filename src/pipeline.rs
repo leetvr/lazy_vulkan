@@ -128,7 +128,7 @@ impl Pipeline {
     }
 }
 
-fn load_module(path: impl AsRef<Path>, context: &Context) -> vk::ShaderModule {
+pub fn load_module(path: impl AsRef<Path>, context: &Context) -> vk::ShaderModule {
     let mut file = std::fs::File::open(path).unwrap();
     let words = ash::util::read_spv(&mut file).unwrap();
 

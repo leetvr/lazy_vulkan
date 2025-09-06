@@ -168,7 +168,7 @@ impl<SF: StateFamily> Renderer<SF> {
         self.context.end_marker();
 
         // Execute them
-        self.allocator.execute_transfers();
+        self.allocator.execute_transfers(command_buffer);
 
         unsafe {
             // Transition the rendering attachments into their correct state
