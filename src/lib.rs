@@ -70,6 +70,7 @@ impl<SF: StateFamily> LazyVulkan<SF> {
 
     pub fn begin_commands(&mut self) {
         self.renderer.begin_command_buffer();
+        self.renderer.allocator.transfers_complete();
     }
 
     pub fn get_drawable(&mut self) -> Drawable {

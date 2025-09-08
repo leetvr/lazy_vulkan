@@ -1,3 +1,4 @@
+use crate::allocator::Offset;
 use crate::allocator::GLOBAL_MEMORY_SIZE;
 use crate::FULL_IMAGE;
 use std::ptr::NonNull;
@@ -36,13 +37,13 @@ impl DeviceBuffer {
         }
     }
 
-    pub fn get_device_address(&self, offset: offset_allocator::Allocation) -> vk::DeviceAddress {
+    pub fn get_device_address(&self, offset: Offset) -> vk::DeviceAddress {
         let base_address = match self {
             DeviceBuffer::Discrete(discrete_allocator) => discrete_allocator.slab_address,
             DeviceBuffer::Integrated(integrated_allocator) => integrated_allocator.slab_address,
         };
 
-        base_address + offset.offset as vk::DeviceAddress
+        base_address + offset.allocation.offset as u64 + offset.bind_offset
     }
 
     pub fn execute_transfers(
@@ -64,61 +65,78 @@ impl DeviceBuffer {
                     };
                 }
                 TransferDestination::Image(image, extent) => {
-                    let device = &context.device;
-
-                    unsafe {
-                        context.cmd_pipeline_barrier2(
-                            command_buffer,
-                            &vk::DependencyInfo::default().image_memory_barriers(&[
-                                // Swapchain image
-                                vk::ImageMemoryBarrier2::default()
-                                    .subresource_range(FULL_IMAGE)
-                                    .image(image)
-                                    .dst_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
-                                    .dst_stage_mask(vk::PipelineStageFlags2::TRANSFER)
-                                    .old_layout(vk::ImageLayout::UNDEFINED)
-                                    .new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL),
-                            ]),
-                        );
-                        device.cmd_copy_buffer_to_image(
-                            command_buffer,
-                            staging_buffer.handle,
-                            image,
-                            vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-                            &[vk::BufferImageCopy::default()
-                                .buffer_offset(pending.staging_buffer_offset as _)
-                                .image_subresource(
-                                    vk::ImageSubresourceLayers::default()
-                                        .aspect_mask(vk::ImageAspectFlags::COLOR)
-                                        .layer_count(1),
-                                )
-                                .image_extent(extent.into())],
-                        );
-
-                        context.cmd_pipeline_barrier2(
-                            command_buffer,
-                            &vk::DependencyInfo::default().image_memory_barriers(&[
-                                // Swapchain image
-                                vk::ImageMemoryBarrier2::default()
-                                    .subresource_range(FULL_IMAGE)
-                                    .image(image)
-                                    .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
-                                    .src_stage_mask(vk::PipelineStageFlags2::TRANSFER)
-                                    .dst_access_mask(vk::AccessFlags2::SHADER_READ)
-                                    .dst_stage_mask(vk::PipelineStageFlags2::FRAGMENT_SHADER)
-                                    .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
-                                    .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL),
-                            ]),
-                        );
-                    };
-
-                    pending.transfer_token.mark_completed();
+                    image_transfer(
+                        context,
+                        staging_buffer,
+                        command_buffer,
+                        pending,
+                        image,
+                        extent,
+                    );
                 }
             }
         }
-
-        staging_buffer.clear();
     }
+}
+
+fn image_transfer(
+    context: &Context,
+    staging_buffer: &mut StagingBuffer,
+    command_buffer: vk::CommandBuffer,
+    pending: PendingTransfer,
+    image: vk::Image,
+    extent: vk::Extent2D,
+) {
+    let device = &context.device;
+
+    unsafe {
+        // Transition the image into the TRANSFER DST layout
+        context.cmd_pipeline_barrier2(
+            command_buffer,
+            &vk::DependencyInfo::default().image_memory_barriers(&[
+                vk::ImageMemoryBarrier2::default()
+                    .subresource_range(FULL_IMAGE)
+                    .image(image)
+                    .dst_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
+                    .dst_stage_mask(vk::PipelineStageFlags2::TRANSFER)
+                    .old_layout(vk::ImageLayout::UNDEFINED)
+                    .new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL),
+            ]),
+        );
+        // Copy data from our buffer to the target image
+        device.cmd_copy_buffer_to_image(
+            command_buffer,
+            staging_buffer.handle,
+            image,
+            vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+            &[vk::BufferImageCopy::default()
+                .buffer_offset(pending.staging_buffer_offset as _)
+                .image_subresource(
+                    vk::ImageSubresourceLayers::default()
+                        .aspect_mask(vk::ImageAspectFlags::COLOR)
+                        .layer_count(1),
+                )
+                .image_extent(extent.into())],
+        );
+        // Transition the image back to SHADER READ ONLY OPTIMAL layout with the
+        // apprei
+        context.cmd_pipeline_barrier2(
+            command_buffer,
+            &vk::DependencyInfo::default().image_memory_barriers(&[
+                vk::ImageMemoryBarrier2::default()
+                    .subresource_range(FULL_IMAGE)
+                    .image(image)
+                    .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
+                    .src_stage_mask(vk::PipelineStageFlags2::TRANSFER)
+                    .dst_access_mask(vk::AccessFlags2::SHADER_READ)
+                    .dst_stage_mask(vk::PipelineStageFlags2::FRAGMENT_SHADER)
+                    .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+                    .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL),
+            ]),
+        );
+    };
+
+    pending.transfer_token.mark_completed();
 }
 
 pub struct DiscreteDeviceBuffer {
@@ -188,18 +206,20 @@ impl DiscreteDeviceBuffer {
         context.begin_marker("Buffer Transfer", glam::vec4(0., 1., 1., 1.));
         let device = &context.device;
 
-        let (allocation_offset, buffer) = match destination {
+        let (allocation_offset, destination_buffer) = match destination {
             TransferDestination::Buffer(buffer) => (allocation_offset, buffer),
-            TransferDestination::Slab => (global_offset.offset as usize, self.slab_buffer),
+            TransferDestination::Slab => (global_offset.total_offset() as usize, self.slab_buffer),
             _ => return,
         };
+
+        log::trace!("TRANSFER: {transfer_size} [src: {staging_buffer_offset}] -> [dst: {allocation_offset}]");
 
         // Issue the transfer
         unsafe {
             device.cmd_copy_buffer(
                 command_buffer,
                 staging_buffer.handle,
-                buffer,
+                destination_buffer,
                 &[vk::BufferCopy::default()
                     .src_offset(staging_buffer_offset as _)
                     .dst_offset(allocation_offset as _)
@@ -217,7 +237,7 @@ impl DiscreteDeviceBuffer {
                         .src_stage_mask(vk::PipelineStageFlags2::TRANSFER)
                         .dst_access_mask(vk::AccessFlags2::SHADER_READ)
                         .dst_stage_mask(vk::PipelineStageFlags2::VERTEX_SHADER)
-                        .buffer(buffer)
+                        .buffer(destination_buffer)
                         .size(transfer_size),
                 ]),
             )
@@ -344,7 +364,7 @@ impl IntegratedDeviceBuffer {
         // and then finally adding the offset within the allocation itself
         let destination = unsafe {
             self.global_ptr
-                .add(global_offset.offset as usize + allocation_offset)
+                .add(global_offset.total_offset() as usize + allocation_offset)
                 .as_ptr()
         };
 

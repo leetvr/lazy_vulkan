@@ -107,34 +107,22 @@ impl Allocator {
         handle: vk::Buffer,
         size: u64,
     ) -> BufferAllocation<T> {
-        let device = &self.context.device;
-        let reserve = size + (align - 1);
-
         // Allocate an offset into our device local memory
-        let offset = self
-            .offset_allocator
-            .allocate(reserve as u32)
-            .expect("Unable to allocate memory. This should be impossible!");
+        let offset = self.allocate_offset(size, align);
+        let device = &self.context.device;
 
         let label = format!(
-            "[lazy_vulkan] BufferAllocation<{}> at offset {}",
+            "[lazy_vulkan] BufferAllocation<{}> at offset {:?}",
             std::any::type_name::<T>(),
-            offset.offset
+            offset.total_offset(),
         );
         self.context.set_debug_label(handle, &label);
 
-        // Align the offset before binding
-        let bind_offset = align_offset(align, offset);
-
-        let pad = bind_offset - offset.offset as u64;
-        println!(
-            "size: {size}, align: {align}, reserve: {reserve}, offset: {}, bind_offset: {bind_offset}, pad: {pad}",
-            offset.offset
-        );
-
         // Bind its memory
-        unsafe { device.bind_buffer_memory(handle, self.backend.device_memory(), bind_offset) }
-            .unwrap();
+        unsafe {
+            device.bind_buffer_memory(handle, self.backend.device_memory(), offset.total_offset())
+        }
+        .unwrap();
 
         // Get its device address
         let device_address = unsafe {
@@ -157,23 +145,24 @@ impl Allocator {
         extent: vk::Extent2D,
         image: vk::Image,
     ) -> TransferToken {
-        let device = &self.context.device;
-        let memory_requirements = unsafe { device.get_image_memory_requirements(image) };
+        let memory_requirements =
+            unsafe { self.context.device.get_image_memory_requirements(image) };
         let size = memory_requirements.size;
         let align = memory_requirements.alignment;
-        let reserve = size + (align - 1);
 
         // Allocate an offset into our device local memory
-        let global_offset = self
-            .offset_allocator
-            .allocate(reserve as u32)
-            .expect("Unable to allocate memory. This should be impossible!");
-
-        let bind_offset = align_offset(align, global_offset);
+        let global_offset = self.allocate_offset(size, align);
+        let device = &self.context.device;
 
         // Bind the image to the memory at this offset
-        unsafe { device.bind_image_memory(image, self.backend.device_memory(), bind_offset) }
-            .unwrap();
+        unsafe {
+            device.bind_image_memory(
+                image,
+                self.backend.device_memory(),
+                global_offset.total_offset(),
+            )
+        }
+        .unwrap();
 
         // Stage the transfer
         let (ours, theirs) = TransferToken::create_pair();
@@ -203,6 +192,7 @@ impl Allocator {
         allocation: &mut BufferAllocation<T>,
     ) -> TransferToken {
         let bytes = bytemuck::cast_slice(data);
+
         let staging_buffer_offset = self.staging_buffer.stage(bytes);
 
         let (ours, theirs) = TransferToken::create_pair();
@@ -233,15 +223,19 @@ impl Allocator {
         self.context.end_marker();
     }
 
+    /// This should only be called when all transfers issued with `execute_transfers` have been
+    /// actually completed.
+    pub fn transfers_complete(&mut self) {
+        self.staging_buffer.clear();
+    }
+
     pub fn upload_to_slab<T: bytemuck::Pod + Debug>(&mut self, data: &[T]) -> SlabUpload<T> {
         let bytes = bytemuck::cast_slice(data);
         let size = bytes.len() as vk::DeviceSize;
 
         // Allocate an offset into our device local memory
-        let global_offset = self
-            .offset_allocator
-            .allocate(size as u32)
-            .expect("Unable to allocate memory. This should be impossible!");
+        const SLAB_ALIGNMENT: u64 = 8;
+        let global_offset = self.allocate_offset(size, SLAB_ALIGNMENT);
 
         let staging_buffer_offset = self.staging_buffer.stage(bytes);
         let device_address = self.backend.get_device_address(global_offset);
@@ -298,6 +292,66 @@ impl Allocator {
 
         theirs
     }
+
+    fn allocate_offset(&mut self, size: u64, align: u64) -> Offset {
+        let allocation = self
+            .offset_allocator
+            .allocate(size as u32)
+            .expect("COULD NOT ALLOCATE AN OFFSET - THIS SHOULD BE IMPOSSIBLE");
+        let aligned = align_offset(align, allocation);
+
+        // Happy case: the offset is already aligned!
+        if aligned == allocation.offset as u64 {
+            log::trace!(
+                "[ALIGNED]: offset:{}, align:{align}, size: {size}",
+                allocation.offset
+            );
+            return Offset {
+                allocation,
+                bind_offset: 0,
+            };
+        }
+
+        // Not aligned. First, see how much padding we need:
+        let padding = align - (allocation.offset as u64 % align);
+
+        log::trace!(
+            "[NOT ALIGNED]: offset:{}, align:{align}, pad: {padding}, size: {size}",
+            allocation.offset
+        );
+
+        // Free the offset we just got
+        self.offset_allocator.free(allocation);
+
+        // Ask for a new allocation with the padding we need
+        let new_size = (padding + size) as u32;
+        let allocation = self
+            .offset_allocator
+            .allocate(new_size)
+            .expect("COULD NOT ALLOCATE AN OFFSET - THIS SHOULD BE IMPOSSIBLE");
+
+        log::trace!(
+            "[FIXED]: offset:{}, align:{align}, pad: {padding}, size: {new_size}",
+            allocation.offset
+        );
+
+        Offset {
+            allocation,
+            bind_offset: padding,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct Offset {
+    pub allocation: offset_allocator::Allocation,
+    pub bind_offset: vk::DeviceSize,
+}
+
+impl Offset {
+    pub fn total_offset(&self) -> vk::DeviceSize {
+        self.allocation.offset as u64 + self.bind_offset
+    }
 }
 
 fn align_offset(align: u64, offset: offset_allocator::Allocation) -> u64 {
@@ -310,7 +364,7 @@ pub struct SlabUpload<T> {
     pub size: vk::DeviceSize,
     pub transfer_token: TransferToken,
     #[allow(unused)]
-    offset: offset_allocator::Allocation,
+    offset: Offset,
     _phantom: PhantomData<T>,
 }
 
@@ -343,7 +397,7 @@ impl TransferToken {
 pub struct PendingTransfer {
     destination: TransferDestination,
     staging_buffer_offset: usize, // offset within the staging buffer
-    global_offset: offset_allocator::Allocation, // offset into the global memory
+    global_offset: Offset,        // offset into the global memory
     allocation_offset: usize,     // offset within the allocation
     transfer_size: vk::DeviceSize,
     transfer_token: TransferToken,
@@ -361,11 +415,11 @@ pub struct BufferAllocation<T> {
     pub size: vk::DeviceSize,
     pub device_address: vk::DeviceAddress,
     pub handle: vk::Buffer,
-    len: usize, // number of `T`s in this buffer
-    #[allow(unused)]
-    global_offset: offset_allocator::Allocation, // offset into the global memory
+    len: usize,            // number of `T`s in this buffer
+    global_offset: Offset, // offset into the global memory
     _phantom: PhantomData<T>,
 }
+
 impl<T> BufferAllocation<T>
 where
     T: Copy,
@@ -388,5 +442,350 @@ where
 {
     pub fn append(&mut self, data: &[T], allocator: &mut Allocator) {
         allocator.append_to_buffer(data, self);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{allocator::STAGING_MEMORY_SIZE, Context, Core, LazyVulkan};
+    use ash::vk;
+    use std::{sync::Arc, u64};
+
+    #[test]
+    fn test_allocate_single_buffer_roundtrip() {
+        let mut lazy_vulkan = get_vulkan();
+
+        let context = &lazy_vulkan.context;
+        let device = &context.device;
+        let allocator = &mut lazy_vulkan.renderer.allocator;
+
+        let command_buffer = context.draw_command_buffer;
+        unsafe {
+            device.begin_command_buffer(
+                command_buffer,
+                &vk::CommandBufferBeginInfo::default()
+                    .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT),
+            )
+        }
+        .unwrap();
+
+        let mut buffer_a = allocator.allocate_buffer(1024, vk::BufferUsageFlags::TRANSFER_SRC);
+        let data_a: [u8; 4] = [1, 2, 3, 4];
+        buffer_a.append(&data_a, allocator);
+        allocator.execute_transfers(command_buffer);
+        // Barrier
+        unsafe {
+            context.cmd_pipeline_barrier2(
+                command_buffer,
+                &vk::DependencyInfo::default().buffer_memory_barriers(&[
+                    vk::BufferMemoryBarrier2::default()
+                        .buffer(buffer_a.handle)
+                        .size(data_a.len() as _)
+                        .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
+                        .src_stage_mask(vk::PipelineStageFlags2::TRANSFER)
+                        .dst_access_mask(vk::AccessFlags2::TRANSFER_READ)
+                        .dst_stage_mask(vk::PipelineStageFlags2::COPY),
+                ]),
+            )
+        };
+
+        let readback = create_readback_buffer(context);
+        unsafe {
+            device.cmd_copy_buffer(
+                command_buffer,
+                buffer_a.handle,
+                readback.handle,
+                &[vk::BufferCopy::default().size(data_a.len() as u64)],
+            );
+        }
+
+        // Submit and wait
+        submit_and_wait(context, command_buffer);
+        allocator.transfers_complete();
+
+        let readback_data =
+            unsafe { std::slice::from_raw_parts(readback.ptr.as_ptr(), data_a.len()) };
+
+        assert_eq!(&data_a, readback_data);
+    }
+
+    #[test]
+    fn test_allocate_multiple_buffers_roundtrip() {
+        let mut lazy_vulkan = get_vulkan();
+
+        let context = &lazy_vulkan.context;
+        let device = &context.device;
+        let allocator = &mut lazy_vulkan.renderer.allocator;
+
+        let command_buffer = context.draw_command_buffer;
+        unsafe {
+            device.begin_command_buffer(
+                command_buffer,
+                &vk::CommandBufferBeginInfo::default()
+                    .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT),
+            )
+        }
+        .unwrap();
+
+        let mut buffer_a = allocator.allocate_buffer(1024, vk::BufferUsageFlags::TRANSFER_SRC);
+        let data_a: [u8; 4] = [1, 2, 3, 4];
+        buffer_a.append(&data_a, allocator);
+
+        allocator.execute_transfers(command_buffer);
+        // Barrier
+        unsafe {
+            context.cmd_pipeline_barrier2(
+                command_buffer,
+                &vk::DependencyInfo::default().buffer_memory_barriers(&[
+                    vk::BufferMemoryBarrier2::default()
+                        .buffer(buffer_a.handle)
+                        .size(data_a.len() as _)
+                        .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
+                        .src_stage_mask(vk::PipelineStageFlags2::TRANSFER)
+                        .dst_access_mask(
+                            vk::AccessFlags2::TRANSFER_READ | vk::AccessFlags2::TRANSFER_WRITE,
+                        )
+                        .dst_stage_mask(vk::PipelineStageFlags2::COPY),
+                ]),
+            )
+        };
+
+        let mut buffer_b = allocator.allocate_buffer(1024, vk::BufferUsageFlags::TRANSFER_SRC);
+        let data_b: [u8; 4] = [5, 6, 7, 8];
+        buffer_b.append(&data_b, allocator);
+
+        allocator.execute_transfers(command_buffer);
+        // Barrier
+        unsafe {
+            context.cmd_pipeline_barrier2(
+                command_buffer,
+                &vk::DependencyInfo::default().buffer_memory_barriers(&[
+                    vk::BufferMemoryBarrier2::default()
+                        .buffer(buffer_b.handle)
+                        .size(data_b.len() as _)
+                        .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
+                        .src_stage_mask(vk::PipelineStageFlags2::TRANSFER)
+                        .dst_access_mask(
+                            vk::AccessFlags2::TRANSFER_READ | vk::AccessFlags2::TRANSFER_WRITE,
+                        )
+                        .dst_stage_mask(vk::PipelineStageFlags2::COPY),
+                ]),
+            )
+        };
+
+        let readback = create_readback_buffer(context);
+        unsafe {
+            device.cmd_copy_buffer(
+                command_buffer,
+                buffer_a.handle,
+                readback.handle,
+                &[vk::BufferCopy::default().size(data_a.len() as u64)],
+            );
+            device.cmd_copy_buffer(
+                command_buffer,
+                buffer_b.handle,
+                readback.handle,
+                &[vk::BufferCopy::default()
+                    .dst_offset(data_a.len() as u64) // IMPORTANT! Offset by how much transferrred so far
+                    .size(data_b.len() as u64)],
+            );
+        }
+
+        // Submit and wait
+        submit_and_wait(context, command_buffer);
+        allocator.transfers_complete();
+
+        let readback_data = unsafe { std::slice::from_raw_parts(readback.ptr.as_ptr(), 1024) };
+
+        assert_eq!(&data_a, &readback_data[..data_a.len()]);
+        assert_eq!(
+            &data_b,
+            &readback_data[data_a.len()..data_a.len() + data_b.len()]
+        );
+    }
+
+    #[test]
+    fn test_alignment() {
+        let mut lazy_vulkan = get_vulkan();
+
+        let context = &lazy_vulkan.context;
+        let device = &context.device;
+        let allocator = &mut lazy_vulkan.renderer.allocator;
+
+        let command_buffer = context.draw_command_buffer;
+        unsafe {
+            device.begin_command_buffer(
+                command_buffer,
+                &vk::CommandBufferBeginInfo::default()
+                    .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT),
+            )
+        }
+        .unwrap();
+
+        let mut buffer_a = allocator.allocate_buffer(32, vk::BufferUsageFlags::TRANSFER_SRC);
+        let data_a: [u8; 4] = [1, 2, 3, 4];
+        buffer_a.append(&data_a, allocator);
+
+        let mut buffer_b =
+            allocator.allocate_buffer_with_alignment(1024, 64, vk::BufferUsageFlags::TRANSFER_SRC);
+        let data_b: [u8; 4] = [5, 6, 7, 8];
+        buffer_b.append(&data_b, allocator);
+
+        allocator.execute_transfers(command_buffer);
+        // Barrier
+        unsafe {
+            context.cmd_pipeline_barrier2(
+                command_buffer,
+                &vk::DependencyInfo::default().buffer_memory_barriers(&[
+                    vk::BufferMemoryBarrier2::default()
+                        .buffer(buffer_a.handle)
+                        .size(data_a.len() as _)
+                        .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
+                        .src_stage_mask(vk::PipelineStageFlags2::TRANSFER)
+                        .dst_access_mask(
+                            vk::AccessFlags2::TRANSFER_READ | vk::AccessFlags2::TRANSFER_WRITE,
+                        )
+                        .dst_stage_mask(vk::PipelineStageFlags2::COPY),
+                    vk::BufferMemoryBarrier2::default()
+                        .buffer(buffer_b.handle)
+                        .size(data_b.len() as _)
+                        .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
+                        .src_stage_mask(vk::PipelineStageFlags2::TRANSFER)
+                        .dst_access_mask(
+                            vk::AccessFlags2::TRANSFER_READ | vk::AccessFlags2::TRANSFER_WRITE,
+                        )
+                        .dst_stage_mask(vk::PipelineStageFlags2::COPY),
+                ]),
+            )
+        };
+
+        let readback = create_readback_buffer(context);
+        unsafe {
+            device.cmd_copy_buffer(
+                command_buffer,
+                buffer_a.handle,
+                readback.handle,
+                &[vk::BufferCopy::default().size(data_a.len() as u64)],
+            );
+            device.cmd_copy_buffer(
+                command_buffer,
+                buffer_b.handle,
+                readback.handle,
+                &[vk::BufferCopy::default()
+                    .dst_offset(data_a.len() as u64) // IMPORTANT! Offset by how much transferrred so far
+                    .size(data_b.len() as u64)],
+            );
+        }
+
+        // Submit and wait
+        submit_and_wait(context, command_buffer);
+        allocator.transfers_complete();
+
+        let readback_data = unsafe { std::slice::from_raw_parts(readback.ptr.as_ptr(), 1024) };
+
+        assert_eq!(&data_a, &readback_data[..data_a.len()]);
+        assert_eq!(
+            &data_b,
+            &readback_data[data_a.len()..data_a.len() + data_b.len()]
+        );
+    }
+
+    fn get_vulkan() -> LazyVulkan<()> {
+        let core = Arc::new(Core::headless());
+        let context = Arc::new(Context::new_headless(&core));
+        LazyVulkan::headless(
+            core,
+            context,
+            vk::Extent2D {
+                width: 1,
+                height: 1,
+            },
+            vk::Format::R8G8B8A8_UNORM,
+        )
+    }
+
+    fn submit_and_wait(context: &Context, command_buffer: vk::CommandBuffer) {
+        let device = &context.device;
+        unsafe {
+            device.end_command_buffer(command_buffer).unwrap();
+            let fence = device
+                .create_fence(&vk::FenceCreateInfo::default(), None)
+                .unwrap();
+            device
+                .queue_submit(
+                    context.graphics_queue,
+                    &[vk::SubmitInfo::default().command_buffers(&[command_buffer])],
+                    fence,
+                )
+                .unwrap();
+            device.wait_for_fences(&[fence], true, u64::MAX).unwrap();
+        }
+    }
+
+    struct ReadbackBuffer {
+        handle: vk::Buffer,
+        #[allow(unused)]
+        memory: vk::DeviceMemory,
+        ptr: std::ptr::NonNull<u8>,
+    }
+
+    fn create_readback_buffer(context: &Context) -> ReadbackBuffer {
+        let device = &context.device;
+        let memory_properties = &context.memory_properties;
+
+        // Search through the available memory types to find the one we want
+        let mut memory_type_index = None;
+        for (index, memory_type) in memory_properties.memory_types_as_slice().iter().enumerate() {
+            if memory_type.property_flags.contains(
+                vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+            ) {
+                memory_type_index = Some(index as u32);
+                break;
+            }
+        }
+
+        let memory_type_index = memory_type_index.expect("No global memory? Impossible");
+
+        // Allocate our readback memory
+        let memory = unsafe {
+            device.allocate_memory(
+                &vk::MemoryAllocateInfo::default()
+                    .memory_type_index(memory_type_index)
+                    .allocation_size(STAGING_MEMORY_SIZE),
+                None,
+            )
+        }
+        .unwrap();
+
+        // Create a readback buffer
+        let handle = unsafe {
+            device.create_buffer(
+                &vk::BufferCreateInfo::default()
+                    .size(STAGING_MEMORY_SIZE)
+                    .usage(vk::BufferUsageFlags::TRANSFER_SRC | vk::BufferUsageFlags::TRANSFER_DST),
+                None,
+            )
+        }
+        .unwrap();
+
+        context.set_debug_label(handle, "[lazy_vulkan] Readback Buffer");
+
+        // Bind its memory
+        unsafe { device.bind_buffer_memory(handle, memory, 0) }.unwrap();
+
+        // Map its memory
+        let ptr = unsafe {
+            std::ptr::NonNull::new_unchecked(
+                device
+                    .map_memory(memory, 0, vk::WHOLE_SIZE, vk::MemoryMapFlags::empty())
+                    .unwrap() as *mut u8,
+            )
+        };
+
+        ReadbackBuffer {
+            handle,
+            memory,
+            ptr,
+        }
     }
 }
