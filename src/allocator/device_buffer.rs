@@ -118,8 +118,9 @@ fn image_transfer(
                 )
                 .image_extent(extent.into())],
         );
+
         // Transition the image back to SHADER READ ONLY OPTIMAL layout with the
-        // apprei
+        // appropriate barriers.
         context.cmd_pipeline_barrier2(
             command_buffer,
             &vk::DependencyInfo::default().image_memory_barriers(&[
@@ -228,6 +229,7 @@ impl DiscreteDeviceBuffer {
         }
 
         // Place a barrier
+        // TODO(these are a bit pessimistic, they could potentially be inferred from usage flags)
         unsafe {
             device.cmd_pipeline_barrier2(
                 command_buffer,
@@ -235,8 +237,16 @@ impl DiscreteDeviceBuffer {
                     vk::BufferMemoryBarrier2::default()
                         .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
                         .src_stage_mask(vk::PipelineStageFlags2::TRANSFER)
-                        .dst_access_mask(vk::AccessFlags2::SHADER_READ)
-                        .dst_stage_mask(vk::PipelineStageFlags2::VERTEX_SHADER)
+                        .dst_access_mask(
+                            vk::AccessFlags2::SHADER_READ
+                                | vk::AccessFlags2::TRANSFER_WRITE
+                                | vk::AccessFlags2::INDEX_READ,
+                        )
+                        .dst_stage_mask(
+                            vk::PipelineStageFlags2::COPY
+                                | vk::PipelineStageFlags2::VERTEX_SHADER
+                                | vk::PipelineStageFlags2::INDEX_INPUT,
+                        )
                         .buffer(destination_buffer)
                         .size(transfer_size),
                 ]),
