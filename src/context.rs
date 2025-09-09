@@ -92,6 +92,7 @@ impl Context {
         #[cfg(any(target_os = "macos", target_os = "ios"))]
         let dynamic_rendering_pfn =
             ash::khr::dynamic_rendering::Device::new(&core.instance, &device);
+
         #[cfg(any(target_os = "macos", target_os = "ios"))]
         let sync2_pfn = ash::khr::synchronization2::Device::new(&core.instance, &device);
 
@@ -335,7 +336,8 @@ fn create_device(
                         .descriptor_binding_partially_bound(true)
                         .descriptor_binding_sampled_image_update_after_bind(true)
                         .shader_sampled_image_array_non_uniform_indexing(true)
-                        .buffer_device_address(true),
+                        .buffer_device_address(true)
+                        .scalar_block_layout(true),
                 )
                 .push_next(
                     &mut vk::PhysicalDeviceVulkan11Features::default()
@@ -384,7 +386,8 @@ fn create_device(
                         .descriptor_binding_partially_bound(true)
                         .descriptor_binding_sampled_image_update_after_bind(true)
                         .shader_sampled_image_array_non_uniform_indexing(true)
-                        .buffer_device_address(true),
+                        .buffer_device_address(true)
+                        .scalar_block_layout(true),
                 )
                 .push_next(
                     &mut vk::PhysicalDeviceVulkan13Features::default()
