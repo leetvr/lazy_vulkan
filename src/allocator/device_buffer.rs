@@ -206,13 +206,13 @@ impl DiscreteDeviceBuffer {
         context.begin_marker("Buffer Transfer", glam::vec4(0., 1., 1., 1.));
         let device = &context.device;
 
-        let (allocation_offset, destination_buffer) = match destination {
+        let (destination_offset, destination_buffer) = match destination {
             TransferDestination::Buffer(buffer) => (allocation_offset, buffer),
             TransferDestination::Slab => (global_offset.total_offset() as usize, self.slab_buffer),
             _ => return,
         };
 
-        log::trace!("TRANSFER: {transfer_size} [src: {staging_buffer_offset}] -> [dst: {allocation_offset}]");
+        log::trace!("TRANSFER: {transfer_size} [src: {staging_buffer_offset}] -> [dst: {destination_offset}]");
 
         // Issue the transfer
         unsafe {
@@ -222,7 +222,7 @@ impl DiscreteDeviceBuffer {
                 destination_buffer,
                 &[vk::BufferCopy::default()
                     .src_offset(staging_buffer_offset as _)
-                    .dst_offset(allocation_offset as _)
+                    .dst_offset(destination_offset as _)
                     .size(transfer_size)],
             );
         }
@@ -235,11 +235,13 @@ impl DiscreteDeviceBuffer {
                 &vk::DependencyInfo::default().buffer_memory_barriers(&[
                     vk::BufferMemoryBarrier2::default()
                         .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
-                        .src_stage_mask(vk::PipelineStageFlags2::TRANSFER)
+                        .src_stage_mask(
+                            vk::PipelineStageFlags2::TRANSFER | vk::PipelineStageFlags2::COPY,
+                        )
                         .dst_access_mask(
-                            vk::AccessFlags2::SHADER_READ
-                                | vk::AccessFlags2::TRANSFER_WRITE
-                                | vk::AccessFlags2::INDEX_READ,
+                            vk::AccessFlags2::INDEX_READ
+                                | vk::AccessFlags2::SHADER_READ
+                                | vk::AccessFlags2::TRANSFER_WRITE,
                         )
                         .dst_stage_mask(
                             vk::PipelineStageFlags2::COPY
@@ -247,6 +249,7 @@ impl DiscreteDeviceBuffer {
                                 | vk::PipelineStageFlags2::INDEX_INPUT,
                         )
                         .buffer(destination_buffer)
+                        .offset(destination_offset as _)
                         .size(transfer_size),
                 ]),
             )
