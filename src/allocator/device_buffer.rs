@@ -221,8 +221,8 @@ impl DiscreteDeviceBuffer {
                 staging_buffer.handle,
                 destination_buffer,
                 &[vk::BufferCopy::default()
-                    .src_offset(staging_buffer_offset as _)
-                    .dst_offset(destination_offset as _)
+                    .src_offset(staging_buffer_offset as vk::DeviceSize)
+                    .dst_offset(destination_offset as vk::DeviceSize)
                     .size(transfer_size)],
             );
         }

@@ -208,7 +208,7 @@ impl Allocator {
             allocation_offset: allocation.len(),
         });
 
-        allocation.len += data.len();
+        allocation.len += bytes.len();
 
         theirs
     }
@@ -227,6 +227,7 @@ impl Allocator {
             &mut self.staging_buffer,
             command_buffer,
         );
+
         self.context.end_marker();
     }
 
@@ -236,6 +237,7 @@ impl Allocator {
         for token in self.pending_tokens.drain(..) {
             token.mark_completed();
         }
+
         self.staging_buffer.clear();
     }
 
@@ -606,6 +608,75 @@ mod tests {
         allocator.transfers_complete();
 
         let readback_data = unsafe { std::slice::from_raw_parts(readback.ptr.as_ptr(), 1024) };
+
+        assert_eq!(&data_a, &readback_data[..data_a.len()]);
+        assert_eq!(
+            &data_b,
+            &readback_data[data_a.len()..data_a.len() + data_b.len()]
+        );
+    }
+
+    #[test]
+    fn test_append_buffer() {
+        let mut lazy_vulkan = get_vulkan();
+
+        let context = &lazy_vulkan.context;
+        let device = &context.device;
+        let allocator = &mut lazy_vulkan.renderer.allocator;
+
+        let command_buffer = context.draw_command_buffer;
+        unsafe {
+            device.begin_command_buffer(
+                command_buffer,
+                &vk::CommandBufferBeginInfo::default()
+                    .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT),
+            )
+        }
+        .unwrap();
+
+        let mut buffer_a = allocator.allocate_buffer(1024, vk::BufferUsageFlags::TRANSFER_SRC);
+        let data_a: [u64; 4] = [1, 2, 3, 4];
+        buffer_a.append(&data_a, allocator);
+
+        let data_b: [u64; 4] = [5, 6, 7, 8];
+        buffer_a.append(&data_b, allocator);
+
+        allocator.execute_transfers(command_buffer);
+        let total_size = std::mem::size_of_val(&data_a) + std::mem::size_of_val(&data_b);
+
+        // Barrier
+        unsafe {
+            context.cmd_pipeline_barrier2(
+                command_buffer,
+                &vk::DependencyInfo::default().buffer_memory_barriers(&[
+                    vk::BufferMemoryBarrier2::default()
+                        .buffer(buffer_a.handle)
+                        .size(total_size as u64)
+                        .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
+                        .src_stage_mask(vk::PipelineStageFlags2::TRANSFER)
+                        .dst_access_mask(vk::AccessFlags2::TRANSFER_READ)
+                        .dst_stage_mask(vk::PipelineStageFlags2::COPY),
+                ]),
+            )
+        };
+
+        let readback = create_readback_buffer(context);
+        unsafe {
+            device.cmd_copy_buffer(
+                command_buffer,
+                buffer_a.handle,
+                readback.handle,
+                &[vk::BufferCopy::default().size(total_size as _)],
+            );
+        }
+
+        // Submit and wait
+        submit_and_wait(context, command_buffer);
+        allocator.transfers_complete();
+
+        let readback_data = unsafe {
+            std::slice::from_raw_parts(readback.ptr.as_ptr().cast(), data_a.len() + data_b.len())
+        };
 
         assert_eq!(&data_a, &readback_data[..data_a.len()]);
         assert_eq!(
