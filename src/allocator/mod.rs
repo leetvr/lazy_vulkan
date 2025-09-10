@@ -26,6 +26,7 @@ pub struct Allocator {
     offset_allocator: offset_allocator::Allocator,
     backend: DeviceBuffer,
     staging_buffer: StagingBuffer,
+    pending_tokens: Vec<TransferToken>,
 }
 
 impl Allocator {
@@ -41,6 +42,7 @@ impl Allocator {
             pending_frees: Default::default(),
             pending_transfers: Default::default(),
             staging_buffer,
+            pending_tokens: Default::default(),
         }
     }
 
@@ -214,6 +216,11 @@ impl Allocator {
     pub fn execute_transfers(&mut self, command_buffer: vk::CommandBuffer) {
         self.context
             .begin_marker("Execute Transfers", glam::vec4(0., 0., 1., 1.));
+
+        for transfer in &self.pending_transfers {
+            self.pending_tokens.push(transfer.transfer_token.clone());
+        }
+
         self.backend.execute_transfers(
             &self.context,
             std::mem::take(&mut self.pending_transfers),
@@ -226,6 +233,9 @@ impl Allocator {
     /// This should only be called when all transfers issued with `execute_transfers` have been
     /// actually completed.
     pub fn transfers_complete(&mut self) {
+        for token in self.pending_tokens.drain(..) {
+            token.mark_completed();
+        }
         self.staging_buffer.clear();
     }
 

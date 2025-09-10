@@ -196,7 +196,6 @@ impl DiscreteDeviceBuffer {
             destination,
             staging_buffer_offset,
             transfer_size,
-            transfer_token,
             allocation_offset,
             global_offset,
             ..
@@ -253,7 +252,6 @@ impl DiscreteDeviceBuffer {
             )
         };
 
-        transfer_token.mark_completed();
         context.end_marker();
     }
 }
@@ -378,6 +376,7 @@ impl IntegratedDeviceBuffer {
                 .as_ptr()
         };
 
+        // Integrated memory don't care, baby!
         unsafe {
             std::ptr::copy_nonoverlapping(source, destination, transfer_size as usize);
         };
