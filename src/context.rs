@@ -360,6 +360,7 @@ fn create_device(
     enabled_extension_names.push(ash::khr::acceleration_structure::NAME.as_ptr());
     enabled_extension_names.push(ash::khr::ray_tracing_pipeline::NAME.as_ptr());
     enabled_extension_names.push(ash::khr::deferred_host_operations::NAME.as_ptr());
+    enabled_extension_names.push(ash::khr::shader_clock::NAME.as_ptr());
 
     let device = unsafe {
         instance.create_device(
@@ -372,7 +373,8 @@ fn create_device(
                 .enabled_features(
                     &vk::PhysicalDeviceFeatures::default()
                         .fill_mode_non_solid(true)
-                        .sampler_anisotropy(true),
+                        .sampler_anisotropy(true)
+                        .shader_int64(true),
                 )
                 .push_next(
                     &mut vk::PhysicalDeviceVulkan11Features::default()
@@ -401,6 +403,10 @@ fn create_device(
                 .push_next(
                     &mut vk::PhysicalDeviceRayTracingPipelineFeaturesKHR::default()
                         .ray_tracing_pipeline(true),
+                )
+                .push_next(
+                    &mut vk::PhysicalDeviceShaderClockFeaturesKHR::default()
+                        .shader_subgroup_clock(true),
                 ),
             None,
         )

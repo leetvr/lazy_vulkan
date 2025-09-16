@@ -9,6 +9,7 @@ pub struct DrawParams {
     pub drawable: Drawable,
     #[allow(unused)]
     pub depth_buffer: DepthBuffer,
+    pub frame: u32,
 }
 
 impl DrawParams {
@@ -16,11 +17,13 @@ impl DrawParams {
         draw_command_buffer: vk::CommandBuffer,
         drawable: Drawable,
         depth_buffer: DepthBuffer,
+        frame: u32,
     ) -> Self {
         Self {
             draw_command_buffer,
             drawable,
             depth_buffer,
+            frame,
         }
     }
 }

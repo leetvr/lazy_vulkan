@@ -30,6 +30,8 @@ pub struct Renderer<SF: StateFamily> {
     pub descriptors: Descriptors,
     pub sub_renderers: Vec<Box<dyn for<'s> SubRenderer<'s, State = SF::For<'s>>>>,
     swapchain: SwapchainBackend,
+    /// Monotonically increasing frame counter
+    frame: u32,
 }
 
 impl<SF: StateFamily> Renderer<SF> {
@@ -62,6 +64,7 @@ impl<SF: StateFamily> Renderer<SF> {
             image_manager,
             descriptors,
             sub_renderers: Vec::new(),
+            frame: 0,
         }
     }
 
@@ -98,6 +101,7 @@ impl<SF: StateFamily> Renderer<SF> {
                 self.context.draw_command_buffer,
                 drawable,
                 self.depth_buffer,
+                self.frame,
             );
             subrenderer.draw_opaque(state, &self.context, params);
             self.context.end_marker();
@@ -118,6 +122,7 @@ impl<SF: StateFamily> Renderer<SF> {
                 self.context.draw_command_buffer,
                 drawable,
                 self.depth_buffer,
+                self.frame,
             );
             subrenderer.draw_layer(state, &self.context, params);
             self.context.end_marker();
@@ -145,6 +150,8 @@ impl<SF: StateFamily> Renderer<SF> {
         if let SwapchainBackend::WSI(swapchain) = &self.swapchain {
             swapchain.present(drawable, self.context.graphics_queue);
         }
+
+        self.frame += 1;
     }
 
     fn begin_rendering<'s>(&mut self, state: &SF::For<'s>, drawable: &Drawable) {

@@ -46,7 +46,10 @@ impl Allocator {
         }
     }
 
-    /// Allocates a buffer of `max_size`
+    /// Allocates a buffer of `max_size`.
+    ///
+    /// # NOTE
+    /// Here `max_size` refers to the number of `T`s that can fit in this buffer, NOT bytes.
     pub fn allocate_buffer<T: Sized>(
         &mut self,
         max_size: usize,
@@ -194,7 +197,24 @@ impl Allocator {
         allocation: &mut BufferAllocation<T>,
     ) -> TransferToken {
         let bytes = bytemuck::cast_slice(data);
+        self.append_to_buffer_inner(bytes, allocation)
+    }
 
+    pub unsafe fn append_unsafe<T: Copy>(
+        &mut self,
+        data: &[T],
+        allocation: &mut BufferAllocation<T>,
+    ) -> TransferToken {
+        let bytes =
+            std::slice::from_raw_parts(data.as_ptr() as *const u8, std::mem::size_of_val(data));
+        self.append_to_buffer_inner(bytes, allocation)
+    }
+
+    fn append_to_buffer_inner<T: Copy>(
+        &mut self,
+        bytes: &[u8],
+        allocation: &mut BufferAllocation<T>,
+    ) -> TransferToken {
         let staging_buffer_offset = self.staging_buffer.stage(bytes);
 
         let (ours, theirs) = TransferToken::create_pair();
@@ -205,10 +225,10 @@ impl Allocator {
             transfer_size: bytes.len() as _,
             global_offset: allocation.global_offset,
             transfer_token: ours,
-            allocation_offset: allocation.len(),
+            allocation_offset: allocation.current_size() as usize,
         });
 
-        allocation.len += bytes.len();
+        allocation.len += bytes.len() as vk::DeviceSize;
 
         theirs
     }
@@ -278,31 +298,6 @@ impl Allocator {
 
     pub fn free_from_slab<T: Sized>(&mut self, _allocation: BufferAllocation<T>) {
         unimplemented!("Free is not yet implemented");
-    }
-
-    pub unsafe fn append_unsafe<T: Copy>(
-        &mut self,
-        data: &[T],
-        allocation: &mut BufferAllocation<T>,
-    ) -> TransferToken {
-        let bytes =
-            std::slice::from_raw_parts(data.as_ptr() as *const u8, std::mem::size_of_val(data));
-        let staging_buffer_offset = self.staging_buffer.stage(bytes);
-
-        let (ours, theirs) = TransferToken::create_pair();
-
-        self.pending_transfers.push(PendingTransfer {
-            destination: TransferDestination::Buffer(allocation.handle),
-            staging_buffer_offset,
-            transfer_size: bytes.len() as _,
-            global_offset: allocation.global_offset,
-            transfer_token: ours,
-            allocation_offset: allocation.len(),
-        });
-
-        allocation.len += data.len();
-
-        theirs
     }
 
     fn allocate_offset(&mut self, size: u64, align: u64) -> Offset {
@@ -427,7 +422,7 @@ pub struct BufferAllocation<T> {
     pub size: vk::DeviceSize,
     pub device_address: vk::DeviceAddress,
     pub handle: vk::Buffer,
-    len: usize,            // number of `T`s in this buffer
+    len: vk::DeviceSize,   // number of bytes in the buffer
     global_offset: Offset, // offset into the global memory
     _phantom: PhantomData<T>,
 }
@@ -436,13 +431,20 @@ impl<T> BufferAllocation<T>
 where
     T: Copy,
 {
+    // Returns the number of `T`s in the buffer
     pub fn len(&self) -> usize {
+        self.len as usize / std::mem::size_of::<T>()
+    }
+
+    // Returns the number of bytes in the buffer
+    pub fn current_size(&self) -> vk::DeviceSize {
         self.len
     }
 
     pub fn clear(&mut self) {
         self.len = 0;
     }
+
     pub unsafe fn append_unsafe(&mut self, data: &[T], allocator: &mut Allocator) {
         allocator.append_unsafe(data, self);
     }
@@ -637,9 +639,88 @@ mod tests {
         let mut buffer_a = allocator.allocate_buffer(1024, vk::BufferUsageFlags::TRANSFER_SRC);
         let data_a: [u64; 4] = [1, 2, 3, 4];
         buffer_a.append(&data_a, allocator);
+        assert_eq!(buffer_a.len(), data_a.len());
+        assert_eq!(
+            buffer_a.current_size() as usize,
+            std::mem::size_of_val(&data_a)
+        );
 
         let data_b: [u64; 4] = [5, 6, 7, 8];
         buffer_a.append(&data_b, allocator);
+        assert_eq!(buffer_a.len(), data_a.len() + data_b.len());
+        assert_eq!(
+            buffer_a.current_size() as usize,
+            std::mem::size_of_val(&data_a) + std::mem::size_of_val(&data_b)
+        );
+
+        allocator.execute_transfers(command_buffer);
+        let total_size = std::mem::size_of_val(&data_a) + std::mem::size_of_val(&data_b);
+
+        // Barrier
+        unsafe {
+            context.cmd_pipeline_barrier2(
+                command_buffer,
+                &vk::DependencyInfo::default().buffer_memory_barriers(&[
+                    vk::BufferMemoryBarrier2::default()
+                        .buffer(buffer_a.handle)
+                        .size(total_size as u64)
+                        .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
+                        .src_stage_mask(vk::PipelineStageFlags2::TRANSFER)
+                        .dst_access_mask(vk::AccessFlags2::TRANSFER_READ)
+                        .dst_stage_mask(vk::PipelineStageFlags2::COPY),
+                ]),
+            )
+        };
+
+        let readback = create_readback_buffer(context);
+        unsafe {
+            device.cmd_copy_buffer(
+                command_buffer,
+                buffer_a.handle,
+                readback.handle,
+                &[vk::BufferCopy::default().size(total_size as _)],
+            );
+        }
+
+        // Submit and wait
+        submit_and_wait(context, command_buffer);
+        allocator.transfers_complete();
+
+        let readback_data = unsafe {
+            std::slice::from_raw_parts(readback.ptr.as_ptr().cast(), data_a.len() + data_b.len())
+        };
+
+        assert_eq!(&data_a, &readback_data[..data_a.len()]);
+        assert_eq!(
+            &data_b,
+            &readback_data[data_a.len()..data_a.len() + data_b.len()]
+        );
+    }
+
+    #[test]
+    fn test_append_buffer_unsafe() {
+        let mut lazy_vulkan = get_vulkan();
+
+        let context = &lazy_vulkan.context;
+        let device = &context.device;
+        let allocator = &mut lazy_vulkan.renderer.allocator;
+
+        let command_buffer = context.draw_command_buffer;
+        unsafe {
+            device.begin_command_buffer(
+                command_buffer,
+                &vk::CommandBufferBeginInfo::default()
+                    .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT),
+            )
+        }
+        .unwrap();
+
+        let mut buffer_a = allocator.allocate_buffer(1024, vk::BufferUsageFlags::TRANSFER_SRC);
+        let data_a: [u64; 4] = [1, 2, 3, 4];
+        unsafe { buffer_a.append_unsafe(&data_a, allocator) };
+
+        let data_b: [u64; 4] = [5, 6, 7, 8];
+        unsafe { buffer_a.append_unsafe(&data_b, allocator) };
 
         allocator.execute_transfers(command_buffer);
         let total_size = std::mem::size_of_val(&data_a) + std::mem::size_of_val(&data_b);
