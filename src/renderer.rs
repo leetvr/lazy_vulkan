@@ -362,6 +362,23 @@ impl<SF: StateFamily> Renderer<SF> {
             self.get_drawable_format(),
             vertex_shader,
             fragment_shader,
+            vk::CullModeFlags::BACK,
+        )
+    }
+
+    pub fn create_pipeline_with_options<R>(
+        &self,
+        vertex_shader: impl AsRef<Path>,
+        fragment_shader: impl AsRef<Path>,
+        options: PipelineOptions,
+    ) -> Pipeline {
+        Pipeline::new::<R>(
+            self.context.clone(),
+            &self.descriptors,
+            self.get_drawable_format(),
+            vertex_shader,
+            fragment_shader,
+            options.cull_mode,
         )
     }
 
@@ -401,6 +418,19 @@ impl<SF: StateFamily> Renderer<SF> {
                 Some(headless_swapchain.image.clone())
             }
             _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct PipelineOptions {
+    pub cull_mode: vk::CullModeFlags,
+}
+
+impl Default for PipelineOptions {
+    fn default() -> Self {
+        Self {
+            cull_mode: vk::CullModeFlags::BACK,
         }
     }
 }

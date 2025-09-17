@@ -23,6 +23,7 @@ impl Pipeline {
         format: vk::Format,
         vertex_shader: impl AsRef<Path>,
         fragment_shader: impl AsRef<Path>,
+        cull_mode: vk::CullModeFlags,
     ) -> Self {
         let device = &context.device;
 
@@ -71,7 +72,7 @@ impl Pipeline {
                     .rasterization_state(
                         &vk::PipelineRasterizationStateCreateInfo::default()
                             .front_face(vk::FrontFace::COUNTER_CLOCKWISE)
-                            .cull_mode(vk::CullModeFlags::BACK)
+                            .cull_mode(cull_mode)
                             .polygon_mode(vk::PolygonMode::FILL)
                             .line_width(1.0),
                     )
