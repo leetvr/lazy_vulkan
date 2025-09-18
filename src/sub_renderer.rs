@@ -62,14 +62,8 @@ pub trait SubRenderer<'s> {
                 vk::PipelineBindPoint::GRAPHICS,
                 pipeline.handle,
             );
-            device.cmd_bind_descriptor_sets(
-                draw_command_buffer,
-                vk::PipelineBindPoint::GRAPHICS,
-                pipeline.layout,
-                0,
-                &[pipeline.descriptor_set],
-                &[],
-            );
+            // Bind the descriptor sets
+            pipeline.bind_descriptor_sets();
         }
     }
 }

@@ -296,8 +296,6 @@ impl<SF: StateFamily> Renderer<SF> {
         let device = &context.device;
         let queue = context.graphics_queue;
         let command_buffer = context.draw_command_buffer;
-        let swapchain_image = drawable.image;
-
         unsafe {
             // First, transition the color attachment into the present state
             context.cmd_pipeline_barrier2(
@@ -305,11 +303,11 @@ impl<SF: StateFamily> Renderer<SF> {
                 &vk::DependencyInfo::default().image_memory_barriers(&[
                     vk::ImageMemoryBarrier2::default()
                         .subresource_range(FULL_IMAGE)
-                        .image(swapchain_image)
+                        .image(drawable.image)
                         .src_access_mask(vk::AccessFlags2::COLOR_ATTACHMENT_WRITE)
                         .src_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
                         .dst_access_mask(vk::AccessFlags2::NONE)
-                        .dst_stage_mask(vk::PipelineStageFlags2::BOTTOM_OF_PIPE)
+                        .dst_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
                         .old_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
                         .new_layout(vk::ImageLayout::PRESENT_SRC_KHR),
                 ]),

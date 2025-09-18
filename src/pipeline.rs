@@ -127,6 +127,20 @@ impl Pipeline {
             )
         };
     }
+
+    pub fn bind_descriptor_sets(&self) {
+        let command_buffer = self.context.draw_command_buffer;
+        unsafe {
+            self.context.device.cmd_bind_descriptor_sets(
+                command_buffer,
+                vk::PipelineBindPoint::GRAPHICS,
+                self.layout,
+                0,
+                &[self.descriptor_set],
+                &[],
+            );
+        }
+    }
 }
 
 pub fn load_module(path: impl AsRef<Path>, context: &Context) -> vk::ShaderModule {
