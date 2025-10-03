@@ -357,10 +357,15 @@ fn create_device(
     physical_device: vk::PhysicalDevice,
     enabled_extension_names: &mut Vec<*const c_char>,
 ) -> ash::Device {
-    enabled_extension_names.push(ash::khr::acceleration_structure::NAME.as_ptr());
-    enabled_extension_names.push(ash::khr::ray_tracing_pipeline::NAME.as_ptr());
-    enabled_extension_names.push(ash::khr::deferred_host_operations::NAME.as_ptr());
-    enabled_extension_names.push(ash::khr::shader_clock::NAME.as_ptr());
+    // TODO: hide this behind an "RTX ON"
+
+    let rtx_on = false;
+    if rtx_on {
+        enabled_extension_names.push(ash::khr::acceleration_structure::NAME.as_ptr());
+        enabled_extension_names.push(ash::khr::ray_tracing_pipeline::NAME.as_ptr());
+        enabled_extension_names.push(ash::khr::deferred_host_operations::NAME.as_ptr());
+        enabled_extension_names.push(ash::khr::shader_clock::NAME.as_ptr());
+    }
 
     let device = unsafe {
         instance.create_device(
@@ -374,12 +379,14 @@ fn create_device(
                     &vk::PhysicalDeviceFeatures::default()
                         .fill_mode_non_solid(true)
                         .sampler_anisotropy(true)
-                        .shader_int64(true),
+                        .shader_int64(true)
+                        .multi_draw_indirect(true),
                 )
                 .push_next(
                     &mut vk::PhysicalDeviceVulkan11Features::default()
                         .variable_pointers(true)
-                        .variable_pointers_storage_buffer(true),
+                        .variable_pointers_storage_buffer(true)
+                        .shader_draw_parameters(true),
                 )
                 .push_next(
                     &mut vk::PhysicalDeviceVulkan12Features::default()
@@ -391,22 +398,22 @@ fn create_device(
                         .buffer_device_address(true)
                         .scalar_block_layout(true),
                 )
+                // .push_next(
+                //     &mut vk::PhysicalDeviceAccelerationStructureFeaturesKHR::default()
+                //         .acceleration_structure(true),
+                // )
+                // .push_next(
+                //     &mut vk::PhysicalDeviceRayTracingPipelineFeaturesKHR::default()
+                //         .ray_tracing_pipeline(true),
+                // )
+                // .push_next(
+                //     &mut vk::PhysicalDeviceShaderClockFeaturesKHR::default()
+                //         .shader_subgroup_clock(true),
+                // )
                 .push_next(
                     &mut vk::PhysicalDeviceVulkan13Features::default()
                         .dynamic_rendering(true)
                         .synchronization2(true),
-                )
-                .push_next(
-                    &mut vk::PhysicalDeviceAccelerationStructureFeaturesKHR::default()
-                        .acceleration_structure(true),
-                )
-                .push_next(
-                    &mut vk::PhysicalDeviceRayTracingPipelineFeaturesKHR::default()
-                        .ray_tracing_pipeline(true),
-                )
-                .push_next(
-                    &mut vk::PhysicalDeviceShaderClockFeaturesKHR::default()
-                        .shader_subgroup_clock(true),
                 ),
             None,
         )

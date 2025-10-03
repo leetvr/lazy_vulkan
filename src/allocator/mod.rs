@@ -431,12 +431,12 @@ impl<T> BufferAllocation<T>
 where
     T: Copy,
 {
-    // Returns the number of `T`s in the buffer
+    /// Returns the number of `T`s in the buffer
     pub fn len(&self) -> usize {
         self.len as usize / std::mem::size_of::<T>()
     }
 
-    // Returns the number of bytes in the buffer
+    /// Returns the number of *bytes* in the buffer
     pub fn current_size(&self) -> vk::DeviceSize {
         self.len
     }
@@ -448,6 +448,10 @@ where
     pub unsafe fn append_unsafe(&mut self, data: &[T], allocator: &mut Allocator) {
         allocator.append_unsafe(data, self);
     }
+
+    pub fn tip_address(&self) -> vk::DeviceAddress {
+        self.device_address + self.current_size()
+    }
 }
 
 impl<T> BufferAllocation<T>
@@ -456,6 +460,10 @@ where
 {
     pub fn append(&mut self, data: &[T], allocator: &mut Allocator) {
         allocator.append_to_buffer(data, self);
+    }
+
+    pub fn append_one(&mut self, data: &T, allocator: &mut Allocator) {
+        allocator.append_to_buffer(std::slice::from_ref(data), self);
     }
 }
 

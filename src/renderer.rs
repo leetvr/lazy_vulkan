@@ -88,12 +88,13 @@ impl<SF: StateFamily> Renderer<SF> {
     pub fn draw<'s>(&mut self, state: &SF::For<'s>, drawable: &Drawable) {
         // Begin rendering
         self.begin_rendering(state, drawable);
+        self.context
+            .begin_marker("Drawing", glam::vec4(0.0, 0.0, 1.0, 1.0));
 
         let drawable = drawable.clone(); // TODO
 
         // Draw with our sub-renderers
-        self.context
-            .begin_marker("Drawing", glam::vec4(0.0, 0.0, 1.0, 1.0));
+
         for subrenderer in &mut self.sub_renderers {
             self.context
                 .begin_marker(subrenderer.label(), glam::vec4(1.0, 0.0, 1.0, 1.0));
@@ -106,7 +107,6 @@ impl<SF: StateFamily> Renderer<SF> {
             subrenderer.draw_opaque(state, &self.context, params);
             self.context.end_marker();
         }
-        self.context.end_marker();
 
         // End dynamic rendering
         unsafe {
@@ -127,6 +127,8 @@ impl<SF: StateFamily> Renderer<SF> {
             subrenderer.draw_layer(state, &self.context, params);
             self.context.end_marker();
         }
+
+        self.context.end_marker();
     }
 
     pub fn begin_command_buffer(&mut self) {
@@ -170,7 +172,10 @@ impl<SF: StateFamily> Renderer<SF> {
         self.context
             .begin_marker("Stage Transfers", glam::vec4(1.0, 0.0, 1.0, 1.0));
         for subrenderer in &mut self.sub_renderers {
+            self.context
+                .begin_marker(subrenderer.label(), glam::vec4(1.0, 0.0, 1.0, 1.0));
             subrenderer.stage_transfers(state, &mut self.allocator, &mut self.image_manager);
+            self.context.end_marker();
         }
         self.context.end_marker();
 
