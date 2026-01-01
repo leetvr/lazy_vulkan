@@ -365,7 +365,7 @@ impl<SF: StateFamily> Renderer<SF> {
             self.get_drawable_format(),
             vertex_shader,
             fragment_shader,
-            vk::CullModeFlags::BACK,
+            Default::default(),
         )
     }
 
@@ -381,7 +381,7 @@ impl<SF: StateFamily> Renderer<SF> {
             self.get_drawable_format(),
             vertex_shader,
             fragment_shader,
-            options.cull_mode,
+            options,
         )
     }
 
@@ -428,12 +428,14 @@ impl<SF: StateFamily> Renderer<SF> {
 #[derive(Debug, Clone)]
 pub struct PipelineOptions {
     pub cull_mode: vk::CullModeFlags,
+    pub polygon_mode: vk::PolygonMode,
 }
 
 impl Default for PipelineOptions {
     fn default() -> Self {
         Self {
             cull_mode: vk::CullModeFlags::BACK,
+            polygon_mode: vk::PolygonMode::FILL,
         }
     }
 }
