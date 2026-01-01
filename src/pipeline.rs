@@ -5,7 +5,7 @@ use std::{
 
 use ash::vk;
 
-use crate::descriptors::Descriptors;
+use crate::{descriptors::Descriptors, PipelineOptions};
 
 use super::{context::Context, depth_buffer::DEPTH_FORMAT};
 
@@ -19,7 +19,7 @@ pub struct Pipeline {
     vertex_shader_path: PathBuf,
     fragment_shader_path: PathBuf,
     format: vk::Format,
-    cull_mode: vk::CullModeFlags,
+    options: PipelineOptions,
 }
 
 impl Pipeline {
@@ -30,7 +30,7 @@ impl Pipeline {
         format: vk::Format,
         vertex_shader: impl AsRef<Path>,
         fragment_shader: impl AsRef<Path>,
-        cull_mode: vk::CullModeFlags,
+        options: PipelineOptions,
     ) -> Self {
         let device = &context.device;
 
@@ -52,7 +52,7 @@ impl Pipeline {
         let handle = create_pipeline::<Registers>(
             &context,
             format,
-            cull_mode,
+            &options,
             layout,
             vertex_shader_path,
             fragment_shader_path,
@@ -66,7 +66,7 @@ impl Pipeline {
             vertex_shader_path: vertex_shader_path.into(),
             fragment_shader_path: fragment_shader_path.into(),
             format,
-            cull_mode,
+            options,
         }
     }
 
@@ -101,7 +101,7 @@ impl Pipeline {
         self.handle = create_pipeline::<Registers>(
             &self.context,
             self.format,
-            self.cull_mode,
+            &self.options,
             self.layout,
             &self.vertex_shader_path,
             &self.fragment_shader_path,
@@ -112,12 +112,18 @@ impl Pipeline {
 fn create_pipeline<Registers>(
     context: &Arc<Context>,
     format: vk::Format,
-    cull_mode: vk::CullModeFlags,
+    options: &PipelineOptions,
     layout: vk::PipelineLayout,
     vertex_shader_path: &Path,
     fragment_shader_path: &Path,
 ) -> vk::Pipeline {
     let device = &context.device;
+    let topology = if options.polygon_mode == vk::PolygonMode::FILL {
+        vk::PrimitiveTopology::TRIANGLE_LIST
+    } else {
+        vk::PrimitiveTopology::LINE_LIST
+    };
+
     unsafe {
         device.create_graphics_pipelines(
             vk::PipelineCache::null(),
@@ -134,8 +140,7 @@ fn create_pipeline<Registers>(
                 ])
                 .vertex_input_state(&vk::PipelineVertexInputStateCreateInfo::default())
                 .input_assembly_state(
-                    &vk::PipelineInputAssemblyStateCreateInfo::default()
-                        .topology(vk::PrimitiveTopology::TRIANGLE_LIST),
+                    &vk::PipelineInputAssemblyStateCreateInfo::default().topology(topology),
                 )
                 .viewport_state(
                     &vk::PipelineViewportStateCreateInfo::default()
@@ -149,8 +154,8 @@ fn create_pipeline<Registers>(
                 .rasterization_state(
                     &vk::PipelineRasterizationStateCreateInfo::default()
                         .front_face(vk::FrontFace::COUNTER_CLOCKWISE)
-                        .cull_mode(cull_mode)
-                        .polygon_mode(vk::PolygonMode::FILL)
+                        .cull_mode(options.cull_mode)
+                        .polygon_mode(options.polygon_mode)
                         .line_width(1.0),
                 )
                 .depth_stencil_state(
