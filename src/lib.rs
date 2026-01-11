@@ -8,7 +8,7 @@ pub use draw_params::DrawParams;
 pub use headless_swapchain::HeadlessSwapchainImage;
 pub use image_manager::{Image, ImageManager};
 pub use pipeline::{load_module, Pipeline};
-pub use renderer::{PipelineOptions, Renderer};
+pub use renderer::{BlendMode, PipelineOptions, Renderer};
 use std::sync::Arc;
 pub use sub_renderer::{StateFamily, SubRenderer};
 use swapchain::Swapchain;
@@ -63,14 +63,18 @@ impl<SF: StateFamily> LazyVulkan<SF> {
 
     pub fn draw<'s>(&mut self, state: &SF::For<'s>) {
         let drawable = self.renderer.get_drawable();
-        self.renderer.begin_command_buffer();
+        self.begin_commands();
         self.renderer.draw(state, &drawable);
         self.renderer.submit_and_present(drawable);
     }
 
     pub fn begin_commands(&mut self) {
         self.renderer.begin_command_buffer();
-        self.renderer.allocator.transfers_complete();
+
+        // If any transfers were staged on the first frame, we don't want to obliterate them.
+        if self.renderer.frame != 0 {
+            self.renderer.allocator.transfers_complete();
+        }
     }
 
     pub fn get_drawable(&mut self) -> Drawable {

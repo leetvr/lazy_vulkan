@@ -31,7 +31,7 @@ pub struct Renderer<SF: StateFamily> {
     pub sub_renderers: Vec<Box<dyn for<'s> SubRenderer<'s, State = SF::For<'s>>>>,
     swapchain: SwapchainBackend,
     /// Monotonically increasing frame counter
-    frame: u32,
+    pub frame: u32,
 }
 
 impl<SF: StateFamily> Renderer<SF> {
@@ -149,7 +149,7 @@ impl<SF: StateFamily> Renderer<SF> {
         self.submit_rendering(&drawable);
 
         // Present
-        if let SwapchainBackend::WSI(swapchain) = &self.swapchain {
+        if let SwapchainBackend::WSI(swapchain) = &mut self.swapchain {
             swapchain.present(drawable, self.context.graphics_queue);
         }
 
@@ -429,6 +429,14 @@ impl<SF: StateFamily> Renderer<SF> {
 pub struct PipelineOptions {
     pub cull_mode: vk::CullModeFlags,
     pub polygon_mode: vk::PolygonMode,
+    pub blend_mode: BlendMode,
+    pub depth_write: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum BlendMode {
+    None,
+    Alpha,
 }
 
 impl Default for PipelineOptions {
@@ -436,6 +444,8 @@ impl Default for PipelineOptions {
         Self {
             cull_mode: vk::CullModeFlags::BACK,
             polygon_mode: vk::PolygonMode::FILL,
+            blend_mode: BlendMode::None,
+            depth_write: true,
         }
     }
 }

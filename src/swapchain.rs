@@ -155,17 +155,21 @@ impl Swapchain {
         self.needs_update = false;
     }
 
-    pub fn present(&self, drawable: Drawable, queue: vk::Queue) {
+    pub fn present(&mut self, drawable: Drawable, queue: vk::Queue) {
         unsafe {
-            self.swapchain_fn
-                .queue_present(
-                    queue,
-                    &vk::PresentInfoKHR::default()
-                        .wait_semaphores(&[drawable.rendering_complete])
-                        .image_indices(&[drawable.index])
-                        .swapchains(&[self.swapchain_handle]),
-                )
-                .unwrap();
+            match self.swapchain_fn.queue_present(
+                queue,
+                &vk::PresentInfoKHR::default()
+                    .wait_semaphores(&[drawable.rendering_complete])
+                    .image_indices(&[drawable.index])
+                    .swapchains(&[self.swapchain_handle]),
+            ) {
+                Ok(_) => {}
+                Err(err) => match err {
+                    vk::Result::ERROR_OUT_OF_DATE_KHR => self.needs_update = true,
+                    _ => panic!("Failed to present swapchain image: {:?}", err),
+                },
+            }
         }
     }
 }

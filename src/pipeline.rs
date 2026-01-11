@@ -5,7 +5,7 @@ use std::{
 
 use ash::vk;
 
-use crate::{descriptors::Descriptors, PipelineOptions};
+use crate::{descriptors::Descriptors, renderer::BlendMode, PipelineOptions};
 
 use super::{context::Context, depth_buffer::DEPTH_FORMAT};
 
@@ -160,7 +160,7 @@ fn create_pipeline<Registers>(
                 )
                 .depth_stencil_state(
                     &vk::PipelineDepthStencilStateCreateInfo::default()
-                        .depth_write_enable(true)
+                        .depth_write_enable(options.depth_write)
                         .depth_test_enable(true)
                         .depth_compare_op(vk::CompareOp::GREATER_OR_EQUAL)
                         .stencil_test_enable(false)
@@ -168,11 +168,8 @@ fn create_pipeline<Registers>(
                         .max_depth_bounds(1.),
                 )
                 .color_blend_state(
-                    &vk::PipelineColorBlendStateCreateInfo::default().attachments(&[
-                        vk::PipelineColorBlendAttachmentState::default()
-                            .blend_enable(false)
-                            .color_write_mask(vk::ColorComponentFlags::RGBA),
-                    ]),
+                    &vk::PipelineColorBlendStateCreateInfo::default()
+                        .attachments(&[get_blend_attachment(options.blend_mode)]),
                 )
                 .multisample_state(
                     &vk::PipelineMultisampleStateCreateInfo::default()
@@ -188,6 +185,26 @@ fn create_pipeline<Registers>(
         )
     }
     .unwrap()[0]
+}
+
+fn get_blend_attachment(
+    blend_mode: crate::renderer::BlendMode,
+) -> vk::PipelineColorBlendAttachmentState {
+    match blend_mode {
+        BlendMode::None => vk::PipelineColorBlendAttachmentState::default()
+            .blend_enable(false)
+            .color_write_mask(vk::ColorComponentFlags::RGBA),
+        // just to be explicit
+        BlendMode::Alpha => vk::PipelineColorBlendAttachmentState::default()
+            .blend_enable(true)
+            .src_color_blend_factor(vk::BlendFactor::SRC_ALPHA)
+            .dst_color_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
+            .color_blend_op(vk::BlendOp::ADD)
+            .src_alpha_blend_factor(vk::BlendFactor::SRC_ALPHA)
+            .dst_alpha_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
+            .alpha_blend_op(vk::BlendOp::ADD)
+            .color_write_mask(vk::ColorComponentFlags::RGBA),
+    }
 }
 
 pub fn load_module(path: impl AsRef<Path>, context: &Context) -> vk::ShaderModule {

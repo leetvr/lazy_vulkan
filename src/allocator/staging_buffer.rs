@@ -84,6 +84,10 @@ impl StagingBuffer {
 
         let transfer_size = data.len();
 
+        if (staging_buffer_offset + transfer_size) > STAGING_MEMORY_SIZE as usize {
+            panic!("Staging buffer overflow. Transfer size: {transfer_size}, current staging buffer size: {}", self.size);
+        }
+
         // We get the staging pointer by taking the base address and adding the current size of
         // the buffer.
         let staging_ptr = unsafe { self.ptr.add(staging_buffer_offset).as_ptr() };
