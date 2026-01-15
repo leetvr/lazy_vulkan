@@ -46,7 +46,8 @@ impl Descriptors {
                         vk::DescriptorSetLayoutBinding {
                             binding: Self::TEXTURE_BINDING,
                             descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-                            stage_flags: vk::ShaderStageFlags::FRAGMENT,
+                            stage_flags: vk::ShaderStageFlags::COMPUTE
+                                | vk::ShaderStageFlags::FRAGMENT,
                             descriptor_count: 1000,
                             ..Default::default()
                         },
