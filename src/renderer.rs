@@ -86,18 +86,36 @@ impl<SF: StateFamily> Renderer<SF> {
     }
 
     pub fn draw<'s>(&mut self, state: &SF::For<'s>, drawable: &Drawable) {
-        // Begin rendering
-        self.begin_rendering(state, drawable);
         self.context
             .begin_marker("Drawing", glam::vec4(0.0, 0.0, 1.0, 1.0));
 
-        let drawable = drawable.clone(); // TODO
-
         // Draw with our sub-renderers
-
+        // Shadow pass
+        self.context
+            .begin_marker("Draw Shadow", glam::vec4(1.0, 0.2, 0.4, 1.0));
         for subrenderer in &mut self.sub_renderers {
+            let label = format!("{} Shadow Pass", subrenderer.label());
             self.context
-                .begin_marker(subrenderer.label(), glam::vec4(1.0, 0.0, 1.0, 1.0));
+                .begin_marker(&label, glam::vec4(1.0, 0.2, 0.4, 1.0));
+            subrenderer.draw_shadow(state, &self.context);
+            // end pass marker
+            self.context.end_marker();
+        }
+
+        // end draw shadow marker
+        self.context.end_marker();
+
+        // Draw opaque
+        self.context
+            .begin_marker("Draw Opaque", glam::vec4(1.0, 0.0, 1.0, 1.0));
+        // Begin opaque render pass
+        self.begin_rendering(drawable);
+
+        let drawable = drawable.clone(); // TODO
+        for subrenderer in &mut self.sub_renderers {
+            let label = format!("{} Opaque Pass", subrenderer.label());
+            self.context
+                .begin_marker(&label, glam::vec4(1.0, 0.0, 1.0, 1.0));
             let params = DrawParams::new(
                 self.context.draw_command_buffer,
                 drawable,
@@ -105,19 +123,26 @@ impl<SF: StateFamily> Renderer<SF> {
                 self.frame,
             );
             subrenderer.draw_opaque(state, &self.context, params);
+            // end pass marker
             self.context.end_marker();
         }
 
-        // End dynamic rendering
+        // End opaque render pass
         unsafe {
             self.context
                 .cmd_end_rendering(self.context.draw_command_buffer)
         };
 
+        // end draw opaque marker
+        self.context.end_marker();
+
         // Draw layers
+        self.context
+            .begin_marker("Draw Layer", glam::vec4(0.5, 1.0, 0.2, 1.0));
         for subrenderer in &mut self.sub_renderers {
+            let label = format!("{} Layer Pass", subrenderer.label());
             self.context
-                .begin_marker(subrenderer.label(), glam::vec4(1.0, 0.0, 1.0, 1.0));
+                .begin_marker(&label, glam::vec4(0.5, 1.0, 0.2, 1.0));
             let params = DrawParams::new(
                 self.context.draw_command_buffer,
                 drawable,
@@ -125,9 +150,13 @@ impl<SF: StateFamily> Renderer<SF> {
                 self.frame,
             );
             subrenderer.draw_layer(state, &self.context, params);
+            // end pass marker
             self.context.end_marker();
         }
+        // end draw layer marker
+        self.context.end_marker();
 
+        // end "drawing"
         self.context.end_marker();
     }
 
@@ -156,7 +185,7 @@ impl<SF: StateFamily> Renderer<SF> {
         self.frame += 1;
     }
 
-    fn begin_rendering<'s>(&mut self, state: &SF::For<'s>, drawable: &Drawable) {
+    fn begin_rendering(&mut self, drawable: &Drawable) {
         let context = &self.context;
         let device = &context.device;
         let command_buffer = context.draw_command_buffer;
@@ -166,21 +195,7 @@ impl<SF: StateFamily> Renderer<SF> {
 
         // Begin the command buffer
         self.context
-            .begin_marker("Begin Rendering", glam::vec4(0.5, 0.5, 0., 1.));
-
-        // Stage transfers for this frame
-        self.context
-            .begin_marker("Stage Transfers", glam::vec4(1.0, 0.0, 1.0, 1.0));
-        for subrenderer in &mut self.sub_renderers {
-            self.context
-                .begin_marker(subrenderer.label(), glam::vec4(1.0, 0.0, 1.0, 1.0));
-            subrenderer.stage_transfers(state, &mut self.allocator, &mut self.image_manager);
-            self.context.end_marker();
-        }
-        self.context.end_marker();
-
-        // Execute them
-        self.allocator.execute_transfers(command_buffer);
+            .begin_marker("Begin Opaque Pass", glam::vec4(0.5, 0.5, 0., 1.));
 
         unsafe {
             // Transition the rendering attachments into their correct state
@@ -239,7 +254,7 @@ impl<SF: StateFamily> Renderer<SF> {
                         .store_op(vk::AttachmentStoreOp::STORE)
                         .clear_value(vk::ClearValue {
                             color: vk::ClearColorValue {
-                                float32: [0.0, 0.0, 0.0, 1.0],
+                                float32: [0.0, 0.0, 0.0, 0.0],
                             },
                         })]),
             );
@@ -256,7 +271,25 @@ impl<SF: StateFamily> Renderer<SF> {
             );
         }
 
+        // end begin rendering marker
         self.context.end_marker();
+    }
+
+    pub fn stage_and_execute_transfers<'s>(&mut self, state: &<SF as StateFamily>::For<'s>) {
+        let command_buffer = self.context.draw_command_buffer;
+        // Stage transfers for this frame
+        self.context
+            .begin_marker("Stage Transfers", glam::vec4(1.0, 0.0, 1.0, 1.0));
+        for subrenderer in &mut self.sub_renderers {
+            self.context
+                .begin_marker(subrenderer.label(), glam::vec4(1.0, 0.0, 1.0, 1.0));
+            subrenderer.stage_transfers(state, &mut self.allocator, &mut self.image_manager);
+            self.context.end_marker();
+        }
+        self.context.end_marker();
+
+        // Execute them
+        self.allocator.execute_transfers(command_buffer);
     }
 
     pub fn resize(&mut self, extent: vk::Extent2D) {
@@ -431,12 +464,10 @@ pub struct PipelineOptions {
     pub polygon_mode: vk::PolygonMode,
     pub blend_mode: BlendMode,
     pub depth_write: bool,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum BlendMode {
-    None,
-    Alpha,
+    /// Only useful for shadow pipelines
+    pub depth_bias_constant_factor: Option<f32>,
+    /// Only useful for shadow pipelines
+    pub depth_bias_slope_factor: Option<f32>,
 }
 
 impl Default for PipelineOptions {
@@ -446,6 +477,14 @@ impl Default for PipelineOptions {
             polygon_mode: vk::PolygonMode::FILL,
             blend_mode: BlendMode::None,
             depth_write: true,
+            depth_bias_constant_factor: None,
+            depth_bias_slope_factor: None,
         }
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum BlendMode {
+    None,
+    Alpha,
 }

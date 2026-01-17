@@ -107,6 +107,18 @@ impl Pipeline {
             &self.fragment_shader_path,
         );
     }
+
+    pub fn reload_with_new_options<Registers>(&mut self, options: PipelineOptions) {
+        self.options = options;
+        self.handle = create_pipeline::<Registers>(
+            &self.context,
+            self.format,
+            &self.options,
+            self.layout,
+            &self.vertex_shader_path,
+            &self.fragment_shader_path,
+        );
+    }
 }
 
 fn create_pipeline<Registers>(
@@ -118,11 +130,20 @@ fn create_pipeline<Registers>(
     fragment_shader_path: &Path,
 ) -> vk::Pipeline {
     let device = &context.device;
+
+    // Extract options
     let topology = if options.polygon_mode == vk::PolygonMode::FILL {
         vk::PrimitiveTopology::TRIANGLE_LIST
     } else {
         vk::PrimitiveTopology::LINE_LIST
     };
+
+    let is_shadow_pass =
+        options.depth_bias_constant_factor.is_some() || options.depth_bias_slope_factor.is_some();
+
+    let depth_bias_slope_factor = options.depth_bias_slope_factor.unwrap_or_default();
+    let depth_bias_constant_factor = options.depth_bias_constant_factor.unwrap_or_default();
+    let color_attachment_formats: &[vk::Format] = if is_shadow_pass { &[] } else { &[format] };
 
     unsafe {
         device.create_graphics_pipelines(
@@ -156,6 +177,9 @@ fn create_pipeline<Registers>(
                         .front_face(vk::FrontFace::COUNTER_CLOCKWISE)
                         .cull_mode(options.cull_mode)
                         .polygon_mode(options.polygon_mode)
+                        .depth_bias_enable(is_shadow_pass)
+                        .depth_bias_slope_factor(depth_bias_slope_factor)
+                        .depth_bias_constant_factor(depth_bias_constant_factor)
                         .line_width(1.0),
                 )
                 .depth_stencil_state(
@@ -179,7 +203,7 @@ fn create_pipeline<Registers>(
                 .push_next(
                     &mut vk::PipelineRenderingCreateInfo::default()
                         .depth_attachment_format(DEPTH_FORMAT)
-                        .color_attachment_formats(&[format]),
+                        .color_attachment_formats(color_attachment_formats),
                 )],
             None,
         )

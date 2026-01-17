@@ -20,13 +20,12 @@ pub trait SubRenderer<'s> {
     /// Used by debug-utils to provide additional information about operations on this subrenderer
     fn label(&self) -> &'static str;
 
-    /// Most sub-renderers, most of the time, will want to override this function as it provides
-    /// the most convenient way to "just render some triangles":
+    ///////////////////////////////////////////////////////////////////////////////////////////////
+    /// STAGE CALLBACKS
     ///
-    /// - The command buffer will be in the recording state
-    /// - A dynamic render pass will be in-progress
-    #[allow(unused)]
-    fn draw_opaque(&mut self, state: &Self::State, context: &Context, params: DrawParams) {}
+    /// These are called IN THE ORDER THEY ARE DECLARED BELOW, in the order you added each
+    /// sub-renderer to lazy Vulkan.
+    ///////////////////////////////////////////////////////////////////////////////////////////////
 
     /// Override this method if you'd like to perform any transfer operations BEFORE any drawing
     /// begins.
@@ -39,6 +38,20 @@ pub trait SubRenderer<'s> {
     ) {
     }
 
+    /// Useful for
+    ///
+    /// - The command buffer will be in the recording state
+    #[allow(unused)]
+    fn draw_shadow(&mut self, state: &Self::State, context: &Context) {}
+
+    /// Most sub-renderers, most of the time, will want to override this function as it provides
+    /// the most convenient way to "just render some triangles":
+    ///
+    /// - The command buffer will be in the recording state
+    /// - A dynamic render pass will be in-progress
+    #[allow(unused)]
+    fn draw_opaque(&mut self, state: &Self::State, context: &Context, params: DrawParams) {}
+
     /// Override this method if you'd like to perform any drawing on the final colour image before
     /// it's presented. Useful for eg. GUI applications or debug overlays.
     ///
@@ -46,6 +59,10 @@ pub trait SubRenderer<'s> {
     /// Unlike [`Self::draw_opaque`], *NO* dynamic render-pass will be in progress.
     #[allow(unused)]
     fn draw_layer(&mut self, state: &Self::State, context: &Context, params: DrawParams) {}
+
+    ///////////////////////////////////////////////////////////////////////////////////////////////
+    /// HELPERS
+    ///////////////////////////////////////////////////////////////////////////////////////////////
 
     /// Convenience function to Generally Do the right thing. Ensure that:
     ///

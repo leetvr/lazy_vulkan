@@ -64,6 +64,7 @@ impl<SF: StateFamily> LazyVulkan<SF> {
     pub fn draw<'s>(&mut self, state: &SF::For<'s>) {
         let drawable = self.renderer.get_drawable();
         self.begin_commands();
+        self.renderer.stage_and_execute_transfers(state);
         self.renderer.draw(state, &drawable);
         self.renderer.submit_and_present(drawable);
     }
