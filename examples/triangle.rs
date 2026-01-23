@@ -32,12 +32,7 @@ impl TriangleRenderer {
 
 impl<'a> SubRenderer<'a> for TriangleRenderer {
     type State = RenderState;
-    fn draw_opaque(
-        &mut self,
-        state: &Self::State,
-        context: &Context,
-        params: lazy_vulkan::DrawParams,
-    ) {
+    fn draw_opaque(&mut self, state: &Self::State, context: &Context) {
         self.begin_rendering(context, &self.pipeline);
         self.colour = psychedelic_vec4(state.t);
         unsafe {
@@ -46,7 +41,7 @@ impl<'a> SubRenderer<'a> for TriangleRenderer {
             });
             context
                 .device
-                .cmd_draw(params.draw_command_buffer, 3, 1, 0, 0)
+                .cmd_draw(context.draw_command_buffer, 3, 1, 0, 0)
         }
     }
 

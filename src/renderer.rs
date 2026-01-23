@@ -7,14 +7,14 @@ use super::{
 };
 use crate::{
     descriptors::Descriptors,
-    draw_params::DrawParams,
     headless_swapchain::HeadlessSwapchain,
     image_manager::ImageManager,
+    render_plan::{AttachmentState, RenderStage},
     sub_renderer::{StateFamily, SubRenderer},
-    HeadlessSwapchainImage, Image, Pipeline,
+    HeadlessSwapchainImage, Image, Pipeline, RenderPlan,
 };
 use ash::vk::{self};
-use std::{path::Path, sync::Arc, u64};
+use std::{collections::HashMap, path::Path, sync::Arc, u64};
 
 enum SwapchainBackend {
     WSI(Swapchain),
@@ -28,7 +28,7 @@ pub struct Renderer<SF: StateFamily> {
     pub allocator: Allocator,
     pub image_manager: ImageManager,
     pub descriptors: Descriptors,
-    pub sub_renderers: Vec<Box<dyn for<'s> SubRenderer<'s, State = SF::For<'s>>>>,
+    pub sub_renderers: HashMap<String, Box<dyn for<'s> SubRenderer<'s, State = SF::For<'s>>>>,
     swapchain: SwapchainBackend,
     /// Monotonically increasing frame counter
     pub frame: u32,
@@ -63,7 +63,7 @@ impl<SF: StateFamily> Renderer<SF> {
             allocator,
             image_manager,
             descriptors,
-            sub_renderers: Vec::new(),
+            sub_renderers: Default::default(),
             frame: 0,
         }
     }
@@ -85,6 +85,52 @@ impl<SF: StateFamily> Renderer<SF> {
         )
     }
 
+    pub fn draw_render_plan<'s>(
+        &mut self,
+        state: &SF::For<'s>,
+        plan: RenderPlan,
+        drawable: &Drawable,
+    ) {
+        let mut attachment_states = HashMap::new();
+        for attachment in plan.attachments.keys() {
+            attachment_states.insert(attachment.clone(), AttachmentState::Undefined);
+        }
+
+        for pass in &plan.passes {
+            if pass.colour_attachment.is_none() && pass.depth_attachment.is_none() {
+                panic!("Pass has no attachments!");
+            }
+
+            let subrenderer = self
+                .sub_renderers
+                .get_mut(&pass.subrenderer)
+                .expect(&format!("Subrenderer {} not found", pass.subrenderer));
+            let context = &self.context;
+
+            if let Some(colour_attachment) = pass.colour_attachment.as_ref() {
+                let state = attachment_states.get(colour_attachment).expect(&format!(
+                    "Colour attachment {} not found",
+                    colour_attachment
+                ));
+                let colour_attachment = plan.attachments.get(colour_attachment).unwrap();
+
+                let desired_state = AttachmentState::Output;
+
+                if *state != desired_state {
+                    self.transition_attachment(colour_attachment, *state, desired_state);
+                }
+            }
+
+            // TODO: Begin dynamic rendering as appropriate
+
+            match pass.stage {
+                RenderStage::Shadow => subrenderer.draw_shadow(state, context),
+                RenderStage::Opaque => subrenderer.draw_opaque(state, context),
+                RenderStage::Layer => subrenderer.draw_layer(state, context),
+            }
+        }
+    }
+
     pub fn draw<'s>(&mut self, state: &SF::For<'s>, drawable: &Drawable) {
         self.context
             .begin_marker("Drawing", glam::vec4(0.0, 0.0, 1.0, 1.0));
@@ -93,7 +139,7 @@ impl<SF: StateFamily> Renderer<SF> {
         // Shadow pass
         self.context
             .begin_marker("Draw Shadow", glam::vec4(1.0, 0.2, 0.4, 1.0));
-        for subrenderer in &mut self.sub_renderers {
+        for subrenderer in self.sub_renderers.values_mut() {
             let label = format!("{} Shadow Pass", subrenderer.label());
             self.context
                 .begin_marker(&label, glam::vec4(1.0, 0.2, 0.4, 1.0));
@@ -112,17 +158,11 @@ impl<SF: StateFamily> Renderer<SF> {
         self.begin_rendering(drawable);
 
         let drawable = drawable.clone(); // TODO
-        for subrenderer in &mut self.sub_renderers {
+        for subrenderer in self.sub_renderers.values_mut() {
             let label = format!("{} Opaque Pass", subrenderer.label());
             self.context
                 .begin_marker(&label, glam::vec4(1.0, 0.0, 1.0, 1.0));
-            let params = DrawParams::new(
-                self.context.draw_command_buffer,
-                drawable,
-                self.depth_buffer,
-                self.frame,
-            );
-            subrenderer.draw_opaque(state, &self.context, params);
+            subrenderer.draw_opaque(state, &self.context);
             // end pass marker
             self.context.end_marker();
         }
@@ -139,17 +179,11 @@ impl<SF: StateFamily> Renderer<SF> {
         // Draw layers
         self.context
             .begin_marker("Draw Layer", glam::vec4(0.5, 1.0, 0.2, 1.0));
-        for subrenderer in &mut self.sub_renderers {
+        for subrenderer in self.sub_renderers.values_mut() {
             let label = format!("{} Layer Pass", subrenderer.label());
             self.context
                 .begin_marker(&label, glam::vec4(0.5, 1.0, 0.2, 1.0));
-            let params = DrawParams::new(
-                self.context.draw_command_buffer,
-                drawable,
-                self.depth_buffer,
-                self.frame,
-            );
-            subrenderer.draw_layer(state, &self.context, params);
+            subrenderer.draw_layer(state, &self.context);
             // end pass marker
             self.context.end_marker();
         }
@@ -207,7 +241,7 @@ impl<SF: StateFamily> Renderer<SF> {
                         .subresource_range(FULL_IMAGE)
                         .image(drawable.image)
                         .src_access_mask(vk::AccessFlags2::NONE)
-                        .src_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
+                        .src_stage_mask(vk::PipelineStageFlags2::NONE)
                         .dst_access_mask(vk::AccessFlags2::COLOR_ATTACHMENT_WRITE)
                         .dst_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
                         .old_layout(vk::ImageLayout::UNDEFINED)
@@ -216,8 +250,8 @@ impl<SF: StateFamily> Renderer<SF> {
                     vk::ImageMemoryBarrier2::default()
                         .subresource_range(DEPTH_RANGE)
                         .image(self.depth_buffer.image)
-                        .src_access_mask(vk::AccessFlags2::empty())
-                        .src_stage_mask(vk::PipelineStageFlags2::empty())
+                        .src_access_mask(vk::AccessFlags2::NONE)
+                        .src_stage_mask(vk::PipelineStageFlags2::NONE)
                         .dst_access_mask(
                             vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_READ
                                 | vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_WRITE,
@@ -280,7 +314,7 @@ impl<SF: StateFamily> Renderer<SF> {
         // Stage transfers for this frame
         self.context
             .begin_marker("Stage Transfers", glam::vec4(1.0, 0.0, 1.0, 1.0));
-        for subrenderer in &mut self.sub_renderers {
+        for subrenderer in self.sub_renderers.values_mut() {
             self.context
                 .begin_marker(subrenderer.label(), glam::vec4(1.0, 0.0, 1.0, 1.0));
             subrenderer.stage_transfers(state, &mut self.allocator, &mut self.image_manager);
@@ -455,6 +489,15 @@ impl<SF: StateFamily> Renderer<SF> {
             }
             _ => None,
         }
+    }
+
+    fn transition_attachment(
+        &self,
+        colour_attachment: &RenderAttachment,
+        current_state: AttachmentState,
+        desired_state: AttachmentState,
+    ) {
+        todo!()
     }
 }
 

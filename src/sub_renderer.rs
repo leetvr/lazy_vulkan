@@ -50,7 +50,7 @@ pub trait SubRenderer<'s> {
     /// - The command buffer will be in the recording state
     /// - A dynamic render pass will be in-progress
     #[allow(unused)]
-    fn draw_opaque(&mut self, state: &Self::State, context: &Context, params: DrawParams) {}
+    fn draw_opaque(&mut self, state: &Self::State, context: &Context) {}
 
     /// Override this method if you'd like to perform any drawing on the final colour image before
     /// it's presented. Useful for eg. GUI applications or debug overlays.
@@ -58,7 +58,7 @@ pub trait SubRenderer<'s> {
     /// ## NOTE
     /// Unlike [`Self::draw_opaque`], *NO* dynamic render-pass will be in progress.
     #[allow(unused)]
-    fn draw_layer(&mut self, state: &Self::State, context: &Context, params: DrawParams) {}
+    fn draw_layer(&mut self, state: &Self::State, context: &Context) {}
 
     ///////////////////////////////////////////////////////////////////////////////////////////////
     /// HELPERS
