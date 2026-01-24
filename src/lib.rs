@@ -10,7 +10,7 @@ pub use pipeline::{load_module, Pipeline};
 pub use render_plan::{RenderAttachment, RenderPlan};
 pub use renderer::{BlendMode, PipelineOptions, Renderer};
 use std::sync::Arc;
-pub use sub_renderer::{StateFamily, SubRenderer};
+pub use sub_renderer::{AttachmentInfo, LayerInfo, StateFamily, SubRenderer};
 use swapchain::Swapchain;
 
 mod allocator;

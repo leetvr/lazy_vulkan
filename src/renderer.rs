@@ -10,7 +10,7 @@ use crate::{
     headless_swapchain::HeadlessSwapchain,
     image_manager::ImageManager,
     render_plan::{AttachmentState, RenderStage},
-    sub_renderer::{StateFamily, SubRenderer},
+    sub_renderer::{AttachmentInfo, LayerInfo, StateFamily, SubRenderer},
     HeadlessSwapchainImage, Image, Pipeline, RenderPlan,
 };
 use ash::vk::{self};
@@ -91,44 +91,255 @@ impl<SF: StateFamily> Renderer<SF> {
         plan: RenderPlan,
         drawable: &Drawable,
     ) {
+        self.context
+            .begin_marker("Drawing Render Plan", glam::vec4(0.0, 0.0, 1.0, 1.0));
         let mut attachment_states = HashMap::new();
         for attachment in plan.attachments.keys() {
             attachment_states.insert(attachment.clone(), AttachmentState::Undefined);
         }
 
+        // Do the main passes
         for pass in &plan.passes {
+            self.context
+                .begin_marker(&pass.name, glam::vec4(1.0, 0.2, 0.4, 1.0));
+
             if pass.colour_attachment.is_none() && pass.depth_attachment.is_none() {
                 panic!("Pass has no attachments!");
             }
 
-            let subrenderer = self
-                .sub_renderers
-                .get_mut(&pass.subrenderer)
-                .expect(&format!("Subrenderer {} not found", pass.subrenderer));
-            let context = &self.context;
+            let mut extent = None;
+            let mut colour_attachment_info = None;
+            let mut depth_attachment_info = None;
 
             if let Some(colour_attachment) = pass.colour_attachment.as_ref() {
-                let state = attachment_states.get(colour_attachment).expect(&format!(
-                    "Colour attachment {} not found",
-                    colour_attachment
-                ));
+                let current_state = attachment_states
+                    .get_mut(colour_attachment)
+                    .expect(&format!(
+                        "Colour attachment {} not found",
+                        colour_attachment
+                    ));
                 let colour_attachment = plan.attachments.get(colour_attachment).unwrap();
 
-                let desired_state = AttachmentState::Output;
+                let desired_state = AttachmentState::ColourOutput;
 
-                if *state != desired_state {
-                    self.transition_attachment(colour_attachment, *state, desired_state);
+                // Transition attachment if necessary
+                if *current_state != desired_state {
+                    self.transition_attachment(
+                        colour_attachment.handle,
+                        current_state,
+                        desired_state,
+                    );
+                }
+
+                // Set the render area
+                extent = Some(colour_attachment.extent);
+
+                colour_attachment_info = Some(
+                    vk::RenderingAttachmentInfo::default()
+                        .image_view(colour_attachment.view)
+                        .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+                        .load_op(vk::AttachmentLoadOp::CLEAR)
+                        .store_op(vk::AttachmentStoreOp::STORE)
+                        .clear_value(vk::ClearValue {
+                            color: vk::ClearColorValue {
+                                float32: [0.0, 0.0, 0.0, 0.0],
+                            },
+                        }),
+                );
+            }
+
+            if let Some(depth_attachment) = pass.depth_attachment.as_ref() {
+                let current_state = attachment_states
+                    .get_mut(depth_attachment)
+                    .expect(&format!("Depth attachment {} not found", depth_attachment));
+                let depth_attachment = plan.attachments.get(depth_attachment).unwrap();
+
+                let desired_state = AttachmentState::DepthOutput;
+
+                // Transition attachment if necessary
+                if *current_state != desired_state {
+                    self.transition_attachment(
+                        depth_attachment.handle,
+                        current_state,
+                        desired_state,
+                    );
+                }
+
+                extent = Some(depth_attachment.extent);
+                depth_attachment_info = Some(
+                    vk::RenderingAttachmentInfo::default()
+                        .image_view(depth_attachment.view)
+                        .image_layout(vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL)
+                        .load_op(vk::AttachmentLoadOp::CLEAR)
+                        .store_op(vk::AttachmentStoreOp::DONT_CARE)
+                        .clear_value(vk::ClearValue {
+                            depth_stencil: vk::ClearDepthStencilValue {
+                                depth: 0.0,
+                                stencil: 0,
+                            },
+                        }),
+                );
+            }
+
+            for sample_attachment_name in pass.sample_attachments.iter() {
+                let current_state =
+                    attachment_states
+                        .get_mut(sample_attachment_name)
+                        .expect(&format!(
+                            "Sample attachment {} not found",
+                            sample_attachment_name
+                        ));
+                let sample_attachment = plan.attachments.get(sample_attachment_name).unwrap();
+                let desired_state = AttachmentState::Sampled;
+
+                // Transition attachment if necessary
+                if *current_state != desired_state {
+                    self.transition_attachment(
+                        sample_attachment.handle,
+                        current_state,
+                        desired_state,
+                    );
                 }
             }
 
-            // TODO: Begin dynamic rendering as appropriate
+            let extent = extent.expect("No colour or depth attachment");
+
+            // Begin rendering
+            unsafe {
+                let device = &self.context.device;
+                let command_buffer = self.context.draw_command_buffer;
+                self.context.cmd_begin_rendering(
+                    command_buffer,
+                    &vk::RenderingInfo::default()
+                        .layer_count(1)
+                        .render_area(extent.into())
+                        .depth_attachment(&depth_attachment_info.unwrap_or_default())
+                        .color_attachments(&[colour_attachment_info.unwrap_or_default()]),
+                );
+                // Set the dynamic state
+                device.cmd_set_scissor(command_buffer, 0, &[extent.into()]);
+                device.cmd_set_viewport(
+                    command_buffer,
+                    0,
+                    &[vk::Viewport::default()
+                        .width(extent.width as _)
+                        .height(extent.height as _)
+                        .max_depth(1.)],
+                );
+            }
+
+            let subrenderer = self.sub_renderers.get_mut(&pass.subrenderer).unwrap();
 
             match pass.stage {
-                RenderStage::Shadow => subrenderer.draw_shadow(state, context),
-                RenderStage::Opaque => subrenderer.draw_opaque(state, context),
-                RenderStage::Layer => subrenderer.draw_layer(state, context),
+                RenderStage::Shadow => subrenderer.draw_shadow(state, &self.context),
+                RenderStage::Opaque => subrenderer.draw_opaque(state, &self.context),
+                RenderStage::Layer => {
+                    let colour_attachment = pass
+                        .colour_attachment
+                        .as_ref()
+                        .map(|a| {
+                            plan.attachments.get(a).map(|a| AttachmentInfo {
+                                extent: a.extent,
+                                view: a.view,
+                                handle: a.handle,
+                            })
+                        })
+                        .flatten();
+
+                    let depth_attachment = pass
+                        .depth_attachment
+                        .as_ref()
+                        .map(|a| {
+                            plan.attachments.get(a).map(|a| AttachmentInfo {
+                                extent: a.extent,
+                                view: a.view,
+                                handle: a.handle,
+                            })
+                        })
+                        .flatten();
+
+                    let layer_info = LayerInfo {
+                        colour_attachment,
+                        depth_attachment,
+                    };
+                    subrenderer.draw_layer(state, &self.context, layer_info);
+                }
             }
+
+            // End rendering
+            unsafe {
+                self.context
+                    .cmd_end_rendering(self.context.draw_command_buffer)
+            }
+
+            // end plan name marker
+            self.context.end_marker();
         }
+
+        // Composite
+        {
+            self.context
+                .begin_marker("Composite", glam::vec4(0.0, 1.0, 0.0, 1.0));
+
+            let current_state = &mut AttachmentState::Undefined;
+
+            // Transition the swapchain image
+            self.transition_attachment(
+                drawable.image,
+                current_state,
+                AttachmentState::ColourOutput,
+            );
+
+            *current_state = AttachmentState::ColourOutput;
+
+            let sampled_attachment = plan
+                .attachments
+                .get(&plan.target_to_composite)
+                .expect("Couldn't find target to composite");
+
+            // Transition the sampled attachment
+            self.transition_attachment(
+                sampled_attachment.handle,
+                current_state,
+                AttachmentState::Sampled,
+            );
+
+            unsafe {
+                let context = &self.context;
+                let command_buffer = self.context.draw_command_buffer;
+
+                // Begin rendering
+                context.cmd_begin_rendering(
+                    command_buffer,
+                    &vk::RenderingInfo::default()
+                        .render_area(drawable.extent.into())
+                        .layer_count(1)
+                        .color_attachments(&[vk::RenderingAttachmentInfo::default()
+                            .image_view(drawable.view)
+                            .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+                            .load_op(vk::AttachmentLoadOp::CLEAR)
+                            .store_op(vk::AttachmentStoreOp::STORE)
+                            .clear_value(vk::ClearValue {
+                                color: vk::ClearColorValue {
+                                    float32: [0.0, 0.0, 0.0, 0.0],
+                                },
+                            })]),
+                );
+
+                let composite_pass = self
+                    .sub_renderers
+                    .get_mut(&plan.compositor_subrenderer)
+                    .expect("Couldn't find compositor subrenderer");
+
+                composite_pass.draw_opaque(state, context);
+            }
+
+            // end composite marker
+            self.context.end_marker();
+        }
+
+        // end render plan marker
+        self.context.end_marker();
     }
 
     pub fn draw<'s>(&mut self, state: &SF::For<'s>, drawable: &Drawable) {
@@ -183,7 +394,22 @@ impl<SF: StateFamily> Renderer<SF> {
             let label = format!("{} Layer Pass", subrenderer.label());
             self.context
                 .begin_marker(&label, glam::vec4(0.5, 1.0, 0.2, 1.0));
-            subrenderer.draw_layer(state, &self.context);
+            subrenderer.draw_layer(
+                state,
+                &self.context,
+                LayerInfo {
+                    colour_attachment: Some(AttachmentInfo {
+                        extent: drawable.extent,
+                        view: drawable.view,
+                        handle: drawable.image,
+                    }),
+                    depth_attachment: Some(AttachmentInfo {
+                        extent: drawable.extent,
+                        view: self.depth_buffer.view,
+                        handle: self.depth_buffer.image,
+                    }),
+                },
+            );
             // end pass marker
             self.context.end_marker();
         }
@@ -492,12 +718,64 @@ impl<SF: StateFamily> Renderer<SF> {
     }
 
     fn transition_attachment(
-        &self,
-        colour_attachment: &RenderAttachment,
-        current_state: AttachmentState,
+        &mut self,
+        handle: vk::Image,
+        current_state: &mut AttachmentState,
         desired_state: AttachmentState,
     ) {
-        todo!()
+        let context = &self.context;
+        let command_buffer = context.draw_command_buffer;
+
+        let (src_access_mask, src_stage_mask, old_layout) = get_flags_for_state(*current_state);
+        let (dst_access_mask, dst_stage_mask, new_layout) = get_flags_for_state(desired_state);
+
+        // Transition the rendering attachments into their correct state
+        unsafe {
+            context.cmd_pipeline_barrier2(
+                command_buffer,
+                &vk::DependencyInfo::default().image_memory_barriers(&[
+                    // Swapchain image
+                    vk::ImageMemoryBarrier2::default()
+                        .subresource_range(FULL_IMAGE)
+                        .image(handle)
+                        .src_access_mask(src_access_mask)
+                        .src_stage_mask(src_stage_mask)
+                        .dst_access_mask(dst_access_mask)
+                        .dst_stage_mask(dst_stage_mask)
+                        .old_layout(old_layout)
+                        .new_layout(new_layout),
+                ]),
+            );
+        }
+
+        *current_state = desired_state
+    }
+}
+
+fn get_flags_for_state(
+    current_state: AttachmentState,
+) -> (vk::AccessFlags2, vk::PipelineStageFlags2, vk::ImageLayout) {
+    match current_state {
+        AttachmentState::ColourOutput => (
+            vk::AccessFlags2::COLOR_ATTACHMENT_WRITE,
+            vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT,
+            vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+        ),
+        AttachmentState::DepthOutput => (
+            vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_WRITE,
+            vk::PipelineStageFlags2::LATE_FRAGMENT_TESTS,
+            vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL,
+        ),
+        AttachmentState::Sampled => (
+            vk::AccessFlags2::SHADER_READ,
+            vk::PipelineStageFlags2::FRAGMENT_SHADER,
+            vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+        ),
+        AttachmentState::Undefined => (
+            vk::AccessFlags2::NONE,
+            vk::PipelineStageFlags2::NONE,
+            vk::ImageLayout::UNDEFINED,
+        ),
     }
 }
 

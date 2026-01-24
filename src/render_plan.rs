@@ -5,10 +5,12 @@ use ash::vk;
 pub struct RenderPlan {
     pub attachments: HashMap<String, RenderAttachment>,
     pub target_to_composite: String,
+    pub compositor_subrenderer: String,
     pub passes: Vec<RenderPass>,
 }
 
 pub struct RenderPass {
+    pub name: String,
     pub subrenderer: String,
     pub stage: RenderStage,
     pub colour_attachment: Option<String>,
@@ -24,7 +26,8 @@ pub enum RenderStage {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AttachmentState {
-    Output,
+    ColourOutput,
+    DepthOutput,
     Sampled,
     Undefined,
 }
