@@ -6,9 +6,9 @@ pub use core::Core;
 pub use draw_params::DrawParams;
 pub use headless_swapchain::HeadlessSwapchainImage;
 pub use image_manager::{Image, ImageManager};
-pub use pipeline::{load_module, Pipeline};
-pub use render_plan::{RenderAttachment, RenderPlan};
-pub use renderer::{BlendMode, PipelineOptions, Renderer};
+pub use pipeline::{load_module, BlendMode, Pipeline, PipelineOptions};
+pub use render_plan::{RenderAttachment, RenderPass, RenderPlan, RenderStage};
+pub use renderer::Renderer;
 use std::sync::Arc;
 pub use sub_renderer::{AttachmentInfo, LayerInfo, StateFamily, SubRenderer};
 use swapchain::Swapchain;
@@ -105,6 +105,26 @@ impl<SF: StateFamily> LazyVulkan<SF> {
             .insert(sub_renderer.label().to_string(), sub_renderer);
     }
 
+    pub fn create_render_attachment(&mut self, attachment_info: RenderAttachmentInfo) {
+        let image = self.renderer.create_image(
+            attachment_info.format,
+            attachment_info.extent,
+            &[],
+            attachment_info.usage,
+        );
+
+        self.renderer.render_attachments.insert(
+            attachment_info.name,
+            RenderAttachment {
+                handle: image.handle,
+                view: image.view,
+                extent: image.extent,
+                id: image.id,
+                format: attachment_info.format,
+            },
+        );
+    }
+
     pub fn submit_and_present(&mut self, drawable: Drawable) {
         self.renderer.submit_and_present(drawable);
     }
@@ -139,4 +159,11 @@ impl IntoExtent for winit::dpi::PhysicalSize<u32> {
             height: self.height,
         }
     }
+}
+
+pub struct RenderAttachmentInfo {
+    pub name: String,
+    pub extent: vk::Extent2D,
+    pub format: vk::Format,
+    pub usage: vk::ImageUsageFlags,
 }

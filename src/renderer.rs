@@ -11,7 +11,7 @@ use crate::{
     image_manager::ImageManager,
     render_plan::{AttachmentState, RenderStage},
     sub_renderer::{AttachmentInfo, LayerInfo, StateFamily, SubRenderer},
-    HeadlessSwapchainImage, Image, Pipeline, RenderPlan,
+    HeadlessSwapchainImage, Image, Pipeline, PipelineOptions, RenderAttachment, RenderPlan,
 };
 use ash::vk::{self};
 use std::{collections::HashMap, path::Path, sync::Arc, u64};
@@ -29,6 +29,7 @@ pub struct Renderer<SF: StateFamily> {
     pub image_manager: ImageManager,
     pub descriptors: Descriptors,
     pub sub_renderers: HashMap<String, Box<dyn for<'s> SubRenderer<'s, State = SF::For<'s>>>>,
+    pub render_attachments: HashMap<String, RenderAttachment>,
     swapchain: SwapchainBackend,
     /// Monotonically increasing frame counter
     pub frame: u32,
@@ -64,6 +65,7 @@ impl<SF: StateFamily> Renderer<SF> {
             image_manager,
             descriptors,
             sub_renderers: Default::default(),
+            render_attachments: Default::default(),
             frame: 0,
         }
     }
@@ -94,7 +96,7 @@ impl<SF: StateFamily> Renderer<SF> {
         self.context
             .begin_marker("Drawing Render Plan", glam::vec4(0.0, 0.0, 1.0, 1.0));
         let mut attachment_states = HashMap::new();
-        for attachment in plan.attachments.keys() {
+        for attachment in self.render_attachments.keys() {
             attachment_states.insert(attachment.clone(), AttachmentState::Undefined);
         }
 
@@ -118,17 +120,22 @@ impl<SF: StateFamily> Renderer<SF> {
                         "Colour attachment {} not found",
                         colour_attachment
                     ));
-                let colour_attachment = plan.attachments.get(colour_attachment).unwrap();
+
+                let colour_attachment = self
+                    .render_attachments
+                    .get(colour_attachment)
+                    .copied()
+                    .unwrap();
 
                 let desired_state = AttachmentState::ColourOutput;
+                let load_op = match *current_state {
+                    AttachmentState::Undefined => vk::AttachmentLoadOp::CLEAR,
+                    _ => vk::AttachmentLoadOp::LOAD,
+                };
 
                 // Transition attachment if necessary
                 if *current_state != desired_state {
-                    self.transition_attachment(
-                        colour_attachment.handle,
-                        current_state,
-                        desired_state,
-                    );
+                    self.transition_attachment(colour_attachment, current_state, desired_state);
                 }
 
                 // Set the render area
@@ -138,7 +145,7 @@ impl<SF: StateFamily> Renderer<SF> {
                     vk::RenderingAttachmentInfo::default()
                         .image_view(colour_attachment.view)
                         .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
-                        .load_op(vk::AttachmentLoadOp::CLEAR)
+                        .load_op(load_op)
                         .store_op(vk::AttachmentStoreOp::STORE)
                         .clear_value(vk::ClearValue {
                             color: vk::ClearColorValue {
@@ -152,17 +159,21 @@ impl<SF: StateFamily> Renderer<SF> {
                 let current_state = attachment_states
                     .get_mut(depth_attachment)
                     .expect(&format!("Depth attachment {} not found", depth_attachment));
-                let depth_attachment = plan.attachments.get(depth_attachment).unwrap();
+                let depth_attachment = self
+                    .render_attachments
+                    .get(depth_attachment)
+                    .copied()
+                    .unwrap();
 
                 let desired_state = AttachmentState::DepthOutput;
+                let load_op = match *current_state {
+                    AttachmentState::Undefined => vk::AttachmentLoadOp::CLEAR,
+                    _ => vk::AttachmentLoadOp::LOAD,
+                };
 
                 // Transition attachment if necessary
                 if *current_state != desired_state {
-                    self.transition_attachment(
-                        depth_attachment.handle,
-                        current_state,
-                        desired_state,
-                    );
+                    self.transition_attachment(depth_attachment, current_state, desired_state);
                 }
 
                 extent = Some(depth_attachment.extent);
@@ -170,8 +181,8 @@ impl<SF: StateFamily> Renderer<SF> {
                     vk::RenderingAttachmentInfo::default()
                         .image_view(depth_attachment.view)
                         .image_layout(vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL)
-                        .load_op(vk::AttachmentLoadOp::CLEAR)
-                        .store_op(vk::AttachmentStoreOp::DONT_CARE)
+                        .load_op(load_op)
+                        .store_op(vk::AttachmentStoreOp::STORE)
                         .clear_value(vk::ClearValue {
                             depth_stencil: vk::ClearDepthStencilValue {
                                 depth: 0.0,
@@ -189,16 +200,16 @@ impl<SF: StateFamily> Renderer<SF> {
                             "Sample attachment {} not found",
                             sample_attachment_name
                         ));
-                let sample_attachment = plan.attachments.get(sample_attachment_name).unwrap();
+                let sample_attachment = self
+                    .render_attachments
+                    .get(sample_attachment_name)
+                    .copied()
+                    .unwrap();
                 let desired_state = AttachmentState::Sampled;
 
                 // Transition attachment if necessary
                 if *current_state != desired_state {
-                    self.transition_attachment(
-                        sample_attachment.handle,
-                        current_state,
-                        desired_state,
-                    );
+                    self.transition_attachment(sample_attachment, current_state, desired_state);
                 }
             }
 
@@ -238,7 +249,7 @@ impl<SF: StateFamily> Renderer<SF> {
                         .colour_attachment
                         .as_ref()
                         .map(|a| {
-                            plan.attachments.get(a).map(|a| AttachmentInfo {
+                            self.render_attachments.get(a).map(|a| AttachmentInfo {
                                 extent: a.extent,
                                 view: a.view,
                                 handle: a.handle,
@@ -250,7 +261,7 @@ impl<SF: StateFamily> Renderer<SF> {
                         .depth_attachment
                         .as_ref()
                         .map(|a| {
-                            plan.attachments.get(a).map(|a| AttachmentInfo {
+                            self.render_attachments.get(a).map(|a| AttachmentInfo {
                                 extent: a.extent,
                                 view: a.view,
                                 handle: a.handle,
@@ -284,25 +295,29 @@ impl<SF: StateFamily> Renderer<SF> {
             let current_state = &mut AttachmentState::Undefined;
 
             // Transition the swapchain image
+            let drawable_render_attachment = RenderAttachment {
+                handle: drawable.image,
+                view: drawable.view,
+                extent: drawable.extent,
+                format: self.get_drawable_format(),
+                id: 0, // unused
+            };
             self.transition_attachment(
-                drawable.image,
+                drawable_render_attachment,
                 current_state,
                 AttachmentState::ColourOutput,
             );
 
             *current_state = AttachmentState::ColourOutput;
 
-            let sampled_attachment = plan
-                .attachments
+            let sampled_attachment = self
+                .render_attachments
                 .get(&plan.target_to_composite)
+                .copied()
                 .expect("Couldn't find target to composite");
 
             // Transition the sampled attachment
-            self.transition_attachment(
-                sampled_attachment.handle,
-                current_state,
-                AttachmentState::Sampled,
-            );
+            self.transition_attachment(sampled_attachment, current_state, AttachmentState::Sampled);
 
             unsafe {
                 let context = &self.context;
@@ -668,10 +683,11 @@ impl<SF: StateFamily> Renderer<SF> {
         fragment_shader: impl AsRef<Path>,
         options: PipelineOptions,
     ) -> Pipeline {
+        let colour_format = options.colour_format.unwrap_or(self.get_drawable_format());
         Pipeline::new::<R>(
             self.context.clone(),
             &self.descriptors,
-            self.get_drawable_format(),
+            colour_format,
             vertex_shader,
             fragment_shader,
             options,
@@ -719,7 +735,7 @@ impl<SF: StateFamily> Renderer<SF> {
 
     fn transition_attachment(
         &mut self,
-        handle: vk::Image,
+        attachment: RenderAttachment,
         current_state: &mut AttachmentState,
         desired_state: AttachmentState,
     ) {
@@ -729,6 +745,11 @@ impl<SF: StateFamily> Renderer<SF> {
         let (src_access_mask, src_stage_mask, old_layout) = get_flags_for_state(*current_state);
         let (dst_access_mask, dst_stage_mask, new_layout) = get_flags_for_state(desired_state);
 
+        let subresource_range = match attachment.format {
+            vk::Format::D32_SFLOAT => DEPTH_RANGE,
+            _ => FULL_IMAGE,
+        };
+
         // Transition the rendering attachments into their correct state
         unsafe {
             context.cmd_pipeline_barrier2(
@@ -736,8 +757,8 @@ impl<SF: StateFamily> Renderer<SF> {
                 &vk::DependencyInfo::default().image_memory_barriers(&[
                     // Swapchain image
                     vk::ImageMemoryBarrier2::default()
-                        .subresource_range(FULL_IMAGE)
-                        .image(handle)
+                        .subresource_range(subresource_range)
+                        .image(attachment.handle)
                         .src_access_mask(src_access_mask)
                         .src_stage_mask(src_stage_mask)
                         .dst_access_mask(dst_access_mask)
@@ -777,35 +798,4 @@ fn get_flags_for_state(
             vk::ImageLayout::UNDEFINED,
         ),
     }
-}
-
-#[derive(Debug, Clone)]
-pub struct PipelineOptions {
-    pub cull_mode: vk::CullModeFlags,
-    pub polygon_mode: vk::PolygonMode,
-    pub blend_mode: BlendMode,
-    pub depth_write: bool,
-    /// Only useful for shadow pipelines
-    pub depth_bias_constant_factor: Option<f32>,
-    /// Only useful for shadow pipelines
-    pub depth_bias_slope_factor: Option<f32>,
-}
-
-impl Default for PipelineOptions {
-    fn default() -> Self {
-        Self {
-            cull_mode: vk::CullModeFlags::BACK,
-            polygon_mode: vk::PolygonMode::FILL,
-            blend_mode: BlendMode::None,
-            depth_write: true,
-            depth_bias_constant_factor: None,
-            depth_bias_slope_factor: None,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum BlendMode {
-    None,
-    Alpha,
 }

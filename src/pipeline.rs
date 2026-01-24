@@ -5,7 +5,7 @@ use std::{
 
 use ash::vk;
 
-use crate::{descriptors::Descriptors, renderer::BlendMode, PipelineOptions};
+use crate::descriptors::Descriptors;
 
 use super::{context::Context, depth_buffer::DEPTH_FORMAT};
 
@@ -27,7 +27,7 @@ impl Pipeline {
     pub fn new<Registers>(
         context: Arc<Context>,
         descriptors: &Descriptors,
-        format: vk::Format,
+        colour_format: vk::Format,
         vertex_shader: impl AsRef<Path>,
         fragment_shader: impl AsRef<Path>,
         options: PipelineOptions,
@@ -51,7 +51,7 @@ impl Pipeline {
 
         let handle = create_pipeline::<Registers>(
             &context,
-            format,
+            colour_format,
             &options,
             layout,
             vertex_shader_path,
@@ -65,7 +65,7 @@ impl Pipeline {
             descriptor_set: descriptors.set,
             vertex_shader_path: vertex_shader_path.into(),
             fragment_shader_path: fragment_shader_path.into(),
-            format,
+            format: colour_format,
             options,
         }
     }
@@ -123,7 +123,7 @@ impl Pipeline {
 
 fn create_pipeline<Registers>(
     context: &Arc<Context>,
-    format: vk::Format,
+    colour_format: vk::Format,
     options: &PipelineOptions,
     layout: vk::PipelineLayout,
     vertex_shader_path: &Path,
@@ -143,7 +143,11 @@ fn create_pipeline<Registers>(
 
     let depth_bias_slope_factor = options.depth_bias_slope_factor.unwrap_or_default();
     let depth_bias_constant_factor = options.depth_bias_constant_factor.unwrap_or_default();
-    let color_attachment_formats: &[vk::Format] = if is_shadow_pass { &[] } else { &[format] };
+    let color_attachment_formats: &[vk::Format] = if is_shadow_pass {
+        &[]
+    } else {
+        &[colour_format]
+    };
 
     unsafe {
         device.create_graphics_pipelines(
@@ -211,9 +215,7 @@ fn create_pipeline<Registers>(
     .unwrap()[0]
 }
 
-fn get_blend_attachment(
-    blend_mode: crate::renderer::BlendMode,
-) -> vk::PipelineColorBlendAttachmentState {
+fn get_blend_attachment(blend_mode: BlendMode) -> vk::PipelineColorBlendAttachmentState {
     match blend_mode {
         BlendMode::None => vk::PipelineColorBlendAttachmentState::default()
             .blend_enable(false)
@@ -241,4 +243,38 @@ pub fn load_module(path: impl AsRef<Path>, context: &Context) -> vk::ShaderModul
             .create_shader_module(&vk::ShaderModuleCreateInfo::default().code(&words), None)
     }
     .unwrap()
+}
+
+#[derive(Debug, Clone)]
+pub struct PipelineOptions {
+    pub cull_mode: vk::CullModeFlags,
+    pub polygon_mode: vk::PolygonMode,
+    pub blend_mode: BlendMode,
+    pub depth_write: bool,
+    /// Only useful for shadow pipelines
+    pub depth_bias_constant_factor: Option<f32>,
+    /// Only useful for shadow pipelines
+    pub depth_bias_slope_factor: Option<f32>,
+    /// Useful for more complex render setups
+    pub colour_format: Option<vk::Format>,
+}
+
+impl Default for PipelineOptions {
+    fn default() -> Self {
+        Self {
+            cull_mode: vk::CullModeFlags::BACK,
+            polygon_mode: vk::PolygonMode::FILL,
+            blend_mode: BlendMode::None,
+            depth_write: true,
+            depth_bias_constant_factor: None,
+            depth_bias_slope_factor: None,
+            colour_format: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum BlendMode {
+    None,
+    Alpha,
 }
