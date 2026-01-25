@@ -70,16 +70,12 @@ impl<SF: StateFamily> Renderer<SF> {
         }
     }
 
-    pub(crate) fn from_wsi(context: Arc<Context>, swapchain: Swapchain) -> Self {
+    pub fn from_wsi(context: Arc<Context>, swapchain: Swapchain) -> Self {
         let extent = swapchain.extent;
         Self::new(context, SwapchainBackend::WSI(swapchain), extent)
     }
 
-    pub(crate) fn headless(
-        context: Arc<Context>,
-        extent: vk::Extent2D,
-        format: vk::Format,
-    ) -> Self {
+    pub fn headless(context: Arc<Context>, extent: vk::Extent2D, format: vk::Format) -> Self {
         Self::new(
             context.clone(),
             SwapchainBackend::Headless(HeadlessSwapchain::new(context, extent, format)),
@@ -109,9 +105,8 @@ impl<SF: StateFamily> Renderer<SF> {
                 panic!("Pass has no attachments!");
             }
 
-            let mut extent = None;
-            let mut colour_attachment_info = None;
-            let mut depth_attachment_info = None;
+            let mut colour_load_op = vk::AttachmentLoadOp::CLEAR;
+            let mut depth_load_op = vk::AttachmentLoadOp::CLEAR;
 
             if let Some(colour_attachment) = pass.colour_attachment.as_ref() {
                 let current_state = attachment_states
@@ -121,6 +116,10 @@ impl<SF: StateFamily> Renderer<SF> {
                         colour_attachment
                     ));
 
+                if *current_state != AttachmentState::Undefined {
+                    colour_load_op = vk::AttachmentLoadOp::LOAD;
+                }
+
                 let colour_attachment = self
                     .render_attachments
                     .get(colour_attachment)
@@ -128,31 +127,11 @@ impl<SF: StateFamily> Renderer<SF> {
                     .unwrap();
 
                 let desired_state = AttachmentState::ColourOutput;
-                let load_op = match *current_state {
-                    AttachmentState::Undefined => vk::AttachmentLoadOp::CLEAR,
-                    _ => vk::AttachmentLoadOp::LOAD,
-                };
 
                 // Transition attachment if necessary
                 if *current_state != desired_state {
                     self.transition_attachment(colour_attachment, current_state, desired_state);
                 }
-
-                // Set the render area
-                extent = Some(colour_attachment.extent);
-
-                colour_attachment_info = Some(
-                    vk::RenderingAttachmentInfo::default()
-                        .image_view(colour_attachment.view)
-                        .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
-                        .load_op(load_op)
-                        .store_op(vk::AttachmentStoreOp::STORE)
-                        .clear_value(vk::ClearValue {
-                            color: vk::ClearColorValue {
-                                float32: [0.0, 0.0, 0.0, 0.0],
-                            },
-                        }),
-                );
             }
 
             if let Some(depth_attachment) = pass.depth_attachment.as_ref() {
@@ -165,31 +144,16 @@ impl<SF: StateFamily> Renderer<SF> {
                     .copied()
                     .unwrap();
 
+                if *current_state != AttachmentState::Undefined {
+                    depth_load_op = vk::AttachmentLoadOp::LOAD;
+                }
+
                 let desired_state = AttachmentState::DepthOutput;
-                let load_op = match *current_state {
-                    AttachmentState::Undefined => vk::AttachmentLoadOp::CLEAR,
-                    _ => vk::AttachmentLoadOp::LOAD,
-                };
 
                 // Transition attachment if necessary
                 if *current_state != desired_state {
                     self.transition_attachment(depth_attachment, current_state, desired_state);
                 }
-
-                extent = Some(depth_attachment.extent);
-                depth_attachment_info = Some(
-                    vk::RenderingAttachmentInfo::default()
-                        .image_view(depth_attachment.view)
-                        .image_layout(vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL)
-                        .load_op(load_op)
-                        .store_op(vk::AttachmentStoreOp::STORE)
-                        .clear_value(vk::ClearValue {
-                            depth_stencil: vk::ClearDepthStencilValue {
-                                depth: 0.0,
-                                stencil: 0,
-                            },
-                        }),
-                );
             }
 
             for sample_attachment_name in pass.sample_attachments.iter() {
@@ -213,37 +177,112 @@ impl<SF: StateFamily> Renderer<SF> {
                 }
             }
 
-            let extent = extent.expect("No colour or depth attachment");
+            let subrenderer = self
+                .sub_renderers
+                .get_mut(&pass.subrenderer)
+                .expect(&format!("Subrenderer not found: {}", pass.subrenderer));
 
-            // Begin rendering
-            unsafe {
-                let device = &self.context.device;
-                let command_buffer = self.context.draw_command_buffer;
-                self.context.cmd_begin_rendering(
-                    command_buffer,
-                    &vk::RenderingInfo::default()
-                        .layer_count(1)
-                        .render_area(extent.into())
-                        .depth_attachment(&depth_attachment_info.unwrap_or_default())
-                        .color_attachments(&[colour_attachment_info.unwrap_or_default()]),
-                );
-                // Set the dynamic state
-                device.cmd_set_scissor(command_buffer, 0, &[extent.into()]);
-                device.cmd_set_viewport(
-                    command_buffer,
-                    0,
-                    &[vk::Viewport::default()
-                        .width(extent.width as _)
-                        .height(extent.height as _)
-                        .max_depth(1.)],
-                );
-            }
-
-            let subrenderer = self.sub_renderers.get_mut(&pass.subrenderer).unwrap();
-
+            let command_buffer = self.context.draw_command_buffer;
+            let device = &self.context.device;
             match pass.stage {
-                RenderStage::Shadow => subrenderer.draw_shadow(state, &self.context),
-                RenderStage::Opaque => subrenderer.draw_opaque(state, &self.context),
+                // The contract for a shadow renderer is that begin rendering will have been
+                // recorded on the shadow buffer
+                RenderStage::Shadow => {
+                    unsafe {
+                        let depth_attachment = self
+                            .render_attachments
+                            .get(pass.depth_attachment.as_ref().unwrap())
+                            .unwrap();
+                        let render_area = depth_attachment.extent;
+
+                        device.cmd_set_scissor(command_buffer, 0, &[render_area.into()]);
+                        device.cmd_set_viewport(
+                            command_buffer,
+                            0,
+                            &[vk::Viewport::default()
+                                .width(render_area.width as _)
+                                .height(render_area.height as _)
+                                .max_depth(1.)],
+                        );
+
+                        self.context.cmd_begin_rendering(
+                            command_buffer,
+                            &vk::RenderingInfo::default()
+                                .layer_count(1)
+                                .render_area(render_area.into())
+                                .depth_attachment(
+                                    &vk::RenderingAttachmentInfo::default()
+                                        .image_view(depth_attachment.view)
+                                        .image_layout(vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL)
+                                        .load_op(depth_load_op)
+                                        .store_op(vk::AttachmentStoreOp::STORE),
+                                ),
+                        );
+                    }
+
+                    // Perform the shadow pass
+                    subrenderer.draw_shadow(state, &self.context);
+
+                    // End rendering
+                    unsafe {
+                        self.context.cmd_end_rendering(command_buffer);
+                    }
+                }
+                // The contract for an opaque renderer is that begin rendering will have been
+                // recorded on the colour buffer with a depth buffer.
+                RenderStage::Opaque => {
+                    unsafe {
+                        let colour_attachment = self
+                            .render_attachments
+                            .get(pass.colour_attachment.as_ref().unwrap())
+                            .unwrap();
+                        let depth_attachment = self
+                            .render_attachments
+                            .get(pass.depth_attachment.as_ref().unwrap())
+                            .unwrap();
+
+                        let render_area = colour_attachment.extent;
+
+                        device.cmd_set_scissor(command_buffer, 0, &[render_area.into()]);
+                        device.cmd_set_viewport(
+                            command_buffer,
+                            0,
+                            &[vk::Viewport::default()
+                                .width(render_area.width as _)
+                                .height(render_area.height as _)
+                                .max_depth(1.)],
+                        );
+
+                        self.context.cmd_begin_rendering(
+                            command_buffer,
+                            &vk::RenderingInfo::default()
+                                .layer_count(1)
+                                .render_area(render_area.into())
+                                .depth_attachment(
+                                    &vk::RenderingAttachmentInfo::default()
+                                        .image_view(depth_attachment.view)
+                                        .image_layout(vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL)
+                                        .load_op(depth_load_op)
+                                        .store_op(vk::AttachmentStoreOp::STORE),
+                                )
+                                .color_attachments(&[vk::RenderingAttachmentInfo::default()
+                                    .image_view(colour_attachment.view)
+                                    .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+                                    .load_op(colour_load_op)
+                                    .store_op(vk::AttachmentStoreOp::STORE)]),
+                        );
+                    }
+
+                    // Perform the opaque pass
+                    subrenderer.draw_opaque(state, &self.context);
+
+                    // End rendering
+                    unsafe {
+                        self.context.cmd_end_rendering(command_buffer);
+                    }
+                }
+                // The contract for a layer renderer is that it is simply given the
+                // to do with whatever it damn well pleases.
                 RenderStage::Layer => {
                     let colour_attachment = pass
                         .colour_attachment
@@ -275,12 +314,6 @@ impl<SF: StateFamily> Renderer<SF> {
                     };
                     subrenderer.draw_layer(state, &self.context, layer_info);
                 }
-            }
-
-            // End rendering
-            unsafe {
-                self.context
-                    .cmd_end_rendering(self.context.draw_command_buffer)
             }
 
             // end plan name marker
@@ -347,6 +380,9 @@ impl<SF: StateFamily> Renderer<SF> {
                     .expect("Couldn't find compositor subrenderer");
 
                 composite_pass.draw_opaque(state, context);
+
+                // End rendering
+                self.context.cmd_end_rendering(command_buffer);
             }
 
             // end composite marker
@@ -449,6 +485,10 @@ impl<SF: StateFamily> Renderer<SF> {
     }
 
     pub fn submit_and_present(&mut self, drawable: Drawable) {
+        self.context.begin_marker(
+            &format!("Submit frame {}", self.frame),
+            glam::Vec4::new(0.5, 0.5, 0., 1.),
+        );
         // Transition the colour image to the present layout and submit all work
         self.submit_rendering(&drawable);
 
@@ -626,6 +666,8 @@ impl<SF: StateFamily> Renderer<SF> {
                 ]),
             );
 
+            self.context.end_marker();
+
             // End the command buffer
             device.end_command_buffer(command_buffer).unwrap();
 
@@ -740,6 +782,7 @@ impl<SF: StateFamily> Renderer<SF> {
         desired_state: AttachmentState,
     ) {
         let context = &self.context;
+        let device = &context.device;
         let command_buffer = context.draw_command_buffer;
 
         let (src_access_mask, src_stage_mask, old_layout) = get_flags_for_state(*current_state);
@@ -749,6 +792,36 @@ impl<SF: StateFamily> Renderer<SF> {
             vk::Format::D32_SFLOAT => DEPTH_RANGE,
             _ => FULL_IMAGE,
         };
+
+        // If the attachment is undefined we should also clear it
+        if *current_state == AttachmentState::Undefined
+            && attachment.format == vk::Format::D32_SFLOAT
+        {
+            unsafe {
+                device.cmd_clear_depth_stencil_image(
+                    command_buffer,
+                    attachment.handle,
+                    vk::ImageLayout::UNDEFINED,
+                    &vk::ClearDepthStencilValue {
+                        depth: 0.,
+                        stencil: 0,
+                    },
+                    &[DEPTH_RANGE],
+                );
+            }
+        } else if *current_state == AttachmentState::Undefined {
+            unsafe {
+                device.cmd_clear_color_image(
+                    command_buffer,
+                    attachment.handle,
+                    vk::ImageLayout::UNDEFINED,
+                    &vk::ClearColorValue {
+                        float32: [0., 0., 0., 0.],
+                    },
+                    &[FULL_IMAGE],
+                );
+            }
+        }
 
         // Transition the rendering attachments into their correct state
         unsafe {
