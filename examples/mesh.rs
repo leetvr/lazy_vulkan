@@ -118,12 +118,7 @@ impl MeshRenderer {
 
 impl<'s> SubRenderer<'s> for MeshRenderer {
     type State = RenderState<'s>;
-    fn draw_opaque(
-        &mut self,
-        state: &Self::State,
-        context: &Context,
-        params: lazy_vulkan::DrawParams,
-    ) {
+    fn draw_opaque(&mut self, state: &Self::State, context: &Context) {
         // Make sure our resources are available before we use them
         if !self.initial_upload.is_complete() {
             return;
@@ -138,7 +133,7 @@ impl<'s> SubRenderer<'s> for MeshRenderer {
 
         self.begin_rendering(context, &self.pipeline);
 
-        let mvp = build_mvp(params.drawable.extent)
+        let mvp = build_mvp(state.extent)
             * glam::Affine3A::from_rotation_translation(self.rotation, self.position);
         let vertex_count = self.buffer.len() as u32;
 
@@ -150,7 +145,7 @@ impl<'s> SubRenderer<'s> for MeshRenderer {
             });
             context
                 .device
-                .cmd_draw(params.draw_command_buffer, vertex_count, 1, 0, 0)
+                .cmd_draw(context.draw_command_buffer, vertex_count, 1, 0, 0)
         }
     }
 
@@ -163,6 +158,7 @@ pub struct RenderState<'s> {
     #[allow(unused)]
     last_render_time: &'s Instant,
     t: f32,
+    extent: vk::Extent2D,
 }
 
 pub struct RenderStateFamily;
@@ -284,9 +280,11 @@ impl<'a> ApplicationHandler for App {
             }
             WindowEvent::RedrawRequested => {
                 let lazy_vulkan = &mut state.lazy_vulkan;
+                let extent = lazy_vulkan.get_drawable().extent;
                 lazy_vulkan.draw(&RenderState {
                     last_render_time: &state.last_render_time,
                     t: state.t,
+                    extent,
                 });
                 state.t += state.last_render_time.elapsed().as_secs_f32();
                 state.last_render_time = Instant::now();

@@ -1,16 +1,16 @@
 pub use crate::swapchain::Drawable;
 pub use allocator::{Allocator, BufferAllocation, SlabUpload, TransferToken};
-pub use ash;
-use ash::vk;
+pub use ash::{self, vk};
 pub use context::Context;
 pub use core::Core;
 pub use draw_params::DrawParams;
 pub use headless_swapchain::HeadlessSwapchainImage;
 pub use image_manager::{Image, ImageManager};
-pub use pipeline::{load_module, Pipeline};
-pub use renderer::{BlendMode, PipelineOptions, Renderer};
+pub use pipeline::{load_module, BlendMode, Pipeline, PipelineOptions};
+pub use render_plan::{RenderAttachment, RenderPass, RenderPlan, RenderStage};
+pub use renderer::Renderer;
 use std::sync::Arc;
-pub use sub_renderer::{StateFamily, SubRenderer};
+pub use sub_renderer::{AttachmentInfo, LayerInfo, StateFamily, SubRenderer};
 use swapchain::Swapchain;
 
 mod allocator;
@@ -22,6 +22,7 @@ mod draw_params;
 mod headless_swapchain;
 mod image_manager;
 mod pipeline;
+mod render_plan;
 mod renderer;
 mod sub_renderer;
 mod swapchain;
@@ -69,6 +70,14 @@ impl<SF: StateFamily> LazyVulkan<SF> {
         self.renderer.submit_and_present(drawable);
     }
 
+    pub fn draw_render_plan<'s>(&mut self, state: &SF::For<'s>, plan: RenderPlan) {
+        let drawable = self.renderer.get_drawable();
+        self.begin_commands();
+        self.renderer.stage_and_execute_transfers(state);
+        self.renderer.draw_render_plan(state, plan, &drawable);
+        self.renderer.submit_and_present(drawable);
+    }
+
     pub fn begin_commands(&mut self) {
         self.renderer.begin_command_buffer();
 
@@ -91,7 +100,29 @@ impl<SF: StateFamily> LazyVulkan<SF> {
         &mut self,
         sub_renderer: Box<dyn for<'s> SubRenderer<'s, State = SF::For<'s>>>,
     ) {
-        self.renderer.sub_renderers.push(sub_renderer);
+        self.renderer
+            .sub_renderers
+            .insert(sub_renderer.label().to_string(), sub_renderer);
+    }
+
+    pub fn create_render_attachment(&mut self, attachment_info: RenderAttachmentInfo) {
+        let image = self.renderer.create_image(
+            attachment_info.format,
+            attachment_info.extent,
+            &[],
+            attachment_info.usage,
+        );
+
+        self.renderer.render_attachments.insert(
+            attachment_info.name,
+            RenderAttachment {
+                handle: image.handle,
+                view: image.view,
+                extent: image.extent,
+                id: image.id,
+                format: attachment_info.format,
+            },
+        );
     }
 
     pub fn submit_and_present(&mut self, drawable: Drawable) {
@@ -128,4 +159,11 @@ impl IntoExtent for winit::dpi::PhysicalSize<u32> {
             height: self.height,
         }
     }
+}
+
+pub struct RenderAttachmentInfo {
+    pub name: String,
+    pub extent: vk::Extent2D,
+    pub format: vk::Format,
+    pub usage: vk::ImageUsageFlags,
 }

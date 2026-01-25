@@ -1,9 +1,6 @@
 use ash::vk;
 
-use crate::{
-    allocator::Allocator, context::Context, draw_params::DrawParams, pipeline::Pipeline,
-    ImageManager,
-};
+use crate::{allocator::Allocator, context::Context, pipeline::Pipeline, ImageManager};
 
 /// A family of state types parameterized by a borrow lifetime.
 pub trait StateFamily {
@@ -50,7 +47,7 @@ pub trait SubRenderer<'s> {
     /// - The command buffer will be in the recording state
     /// - A dynamic render pass will be in-progress
     #[allow(unused)]
-    fn draw_opaque(&mut self, state: &Self::State, context: &Context, params: DrawParams) {}
+    fn draw_opaque(&mut self, state: &Self::State, context: &Context) {}
 
     /// Override this method if you'd like to perform any drawing on the final colour image before
     /// it's presented. Useful for eg. GUI applications or debug overlays.
@@ -58,7 +55,7 @@ pub trait SubRenderer<'s> {
     /// ## NOTE
     /// Unlike [`Self::draw_opaque`], *NO* dynamic render-pass will be in progress.
     #[allow(unused)]
-    fn draw_layer(&mut self, state: &Self::State, context: &Context, params: DrawParams) {}
+    fn draw_layer(&mut self, state: &Self::State, context: &Context, layer_info: LayerInfo) {}
 
     ///////////////////////////////////////////////////////////////////////////////////////////////
     /// HELPERS
@@ -83,4 +80,15 @@ pub trait SubRenderer<'s> {
             pipeline.bind_descriptor_sets();
         }
     }
+}
+
+pub struct LayerInfo {
+    pub colour_attachment: Option<AttachmentInfo>,
+    pub depth_attachment: Option<AttachmentInfo>,
+}
+
+pub struct AttachmentInfo {
+    pub extent: vk::Extent2D,
+    pub view: vk::ImageView,
+    pub handle: vk::Image,
 }
