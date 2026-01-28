@@ -30,6 +30,7 @@ pub enum AttachmentState {
     DepthOutput,
     Sampled,
     Undefined,
+    Swapchain,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

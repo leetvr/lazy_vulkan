@@ -99,6 +99,7 @@ impl MeshRenderer {
         let initial_upload = allocator.append_to_buffer(&CUBE_VERTICES, &mut buffer);
         let (image_bytes, extent) = decode_png(Path::new("examples/vulkan.png"));
         let logo_image = renderer.create_image(
+            "Vulkan Logo",
             vk::Format::R8G8B8A8_SRGB,
             extent,
             image_bytes,

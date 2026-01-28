@@ -107,6 +107,7 @@ impl<SF: StateFamily> LazyVulkan<SF> {
 
     pub fn create_render_attachment(&mut self, attachment_info: RenderAttachmentInfo) {
         let image = self.renderer.create_image(
+            &attachment_info.name,
             attachment_info.format,
             attachment_info.extent,
             &[],

@@ -325,7 +325,7 @@ impl<SF: StateFamily> Renderer<SF> {
             self.context
                 .begin_marker("Composite", glam::vec4(0.0, 1.0, 0.0, 1.0));
 
-            let current_state = &mut AttachmentState::Undefined;
+            let current_state = &mut AttachmentState::Swapchain;
 
             // Transition the swapchain image
             let drawable_render_attachment = RenderAttachment {
@@ -354,7 +354,19 @@ impl<SF: StateFamily> Renderer<SF> {
 
             unsafe {
                 let context = &self.context;
+                let device = &context.device;
                 let command_buffer = self.context.draw_command_buffer;
+                let render_area = drawable.extent;
+
+                device.cmd_set_scissor(command_buffer, 0, &[render_area.into()]);
+                device.cmd_set_viewport(
+                    command_buffer,
+                    0,
+                    &[vk::Viewport::default()
+                        .width(render_area.width as _)
+                        .height(render_area.height as _)
+                        .max_depth(1.)],
+                );
 
                 // Begin rendering
                 context.cmd_begin_rendering(
@@ -417,7 +429,13 @@ impl<SF: StateFamily> Renderer<SF> {
         self.context
             .begin_marker("Draw Opaque", glam::vec4(1.0, 0.0, 1.0, 1.0));
         // Begin opaque render pass
-        self.begin_rendering(drawable);
+        self.begin_rendering(&RenderAttachment {
+            handle: drawable.image,
+            view: drawable.view,
+            extent: drawable.extent,
+            format: self.get_drawable_format(),
+            id: 0, // is is invalid to sample from the colour image during the opaque pass
+        });
 
         let drawable = drawable.clone(); // TODO
         for subrenderer in self.sub_renderers.values_mut() {
@@ -500,13 +518,13 @@ impl<SF: StateFamily> Renderer<SF> {
         self.frame += 1;
     }
 
-    fn begin_rendering(&mut self, drawable: &Drawable) {
+    fn begin_rendering(&mut self, colour_attachment: &RenderAttachment) {
         let context = &self.context;
         let device = &context.device;
         let command_buffer = context.draw_command_buffer;
 
         // Get a `Drawable` from the swapchain
-        let render_area = drawable.extent;
+        let render_area = colour_attachment.extent;
 
         // Begin the command buffer
         self.context
@@ -520,7 +538,7 @@ impl<SF: StateFamily> Renderer<SF> {
                     // Swapchain image
                     vk::ImageMemoryBarrier2::default()
                         .subresource_range(FULL_IMAGE)
-                        .image(drawable.image)
+                        .image(colour_attachment.handle)
                         .src_access_mask(vk::AccessFlags2::NONE)
                         .src_stage_mask(vk::PipelineStageFlags2::NONE)
                         .dst_access_mask(vk::AccessFlags2::COLOR_ATTACHMENT_WRITE)
@@ -563,7 +581,7 @@ impl<SF: StateFamily> Renderer<SF> {
                             }),
                     )
                     .color_attachments(&[vk::RenderingAttachmentInfo::default()
-                        .image_view(drawable.view)
+                        .image_view(colour_attachment.view)
                         .image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
                         .load_op(vk::AttachmentLoadOp::CLEAR)
                         .store_op(vk::AttachmentStoreOp::STORE)
@@ -738,12 +756,14 @@ impl<SF: StateFamily> Renderer<SF> {
 
     pub fn create_image(
         &mut self,
+        name: impl AsRef<str>,
         format: vk::Format,
         extent: vk::Extent2D,
         image_bytes: impl AsRef<[u8]>,
         image_usage_flags: vk::ImageUsageFlags,
     ) -> Image {
         self.image_manager.create_image(
+            name,
             &mut self.allocator,
             format,
             extent,
@@ -782,7 +802,6 @@ impl<SF: StateFamily> Renderer<SF> {
         desired_state: AttachmentState,
     ) {
         let context = &self.context;
-        let device = &context.device;
         let command_buffer = context.draw_command_buffer;
 
         let (src_access_mask, src_stage_mask, old_layout) = get_flags_for_state(*current_state);
@@ -793,38 +812,8 @@ impl<SF: StateFamily> Renderer<SF> {
             _ => FULL_IMAGE,
         };
 
-        // If the attachment is undefined we should also clear it
-        if *current_state == AttachmentState::Undefined
-            && attachment.format == vk::Format::D32_SFLOAT
-        {
-            unsafe {
-                device.cmd_clear_depth_stencil_image(
-                    command_buffer,
-                    attachment.handle,
-                    vk::ImageLayout::UNDEFINED,
-                    &vk::ClearDepthStencilValue {
-                        depth: 0.,
-                        stencil: 0,
-                    },
-                    &[DEPTH_RANGE],
-                );
-            }
-        } else if *current_state == AttachmentState::Undefined {
-            unsafe {
-                device.cmd_clear_color_image(
-                    command_buffer,
-                    attachment.handle,
-                    vk::ImageLayout::UNDEFINED,
-                    &vk::ClearColorValue {
-                        float32: [0., 0., 0., 0.],
-                    },
-                    &[FULL_IMAGE],
-                );
-            }
-        }
-
-        // Transition the rendering attachments into their correct state
         unsafe {
+            // Transition the attachment into its correct state
             context.cmd_pipeline_barrier2(
                 command_buffer,
                 &vk::DependencyInfo::default().image_memory_barriers(&[
@@ -842,6 +831,7 @@ impl<SF: StateFamily> Renderer<SF> {
             );
         }
 
+        // Update the state
         *current_state = desired_state
     }
 }
@@ -851,13 +841,14 @@ fn get_flags_for_state(
 ) -> (vk::AccessFlags2, vk::PipelineStageFlags2, vk::ImageLayout) {
     match current_state {
         AttachmentState::ColourOutput => (
-            vk::AccessFlags2::COLOR_ATTACHMENT_WRITE,
+            vk::AccessFlags2::COLOR_ATTACHMENT_WRITE | vk::AccessFlags2::COLOR_ATTACHMENT_READ,
             vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT,
             vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
         ),
         AttachmentState::DepthOutput => (
             vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_WRITE,
-            vk::PipelineStageFlags2::LATE_FRAGMENT_TESTS,
+            vk::PipelineStageFlags2::EARLY_FRAGMENT_TESTS
+                | vk::PipelineStageFlags2::LATE_FRAGMENT_TESTS,
             vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL,
         ),
         AttachmentState::Sampled => (
@@ -868,6 +859,11 @@ fn get_flags_for_state(
         AttachmentState::Undefined => (
             vk::AccessFlags2::NONE,
             vk::PipelineStageFlags2::NONE,
+            vk::ImageLayout::UNDEFINED,
+        ),
+        AttachmentState::Swapchain => (
+            vk::AccessFlags2::COLOR_ATTACHMENT_WRITE | vk::AccessFlags2::COLOR_ATTACHMENT_READ,
+            vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT,
             vk::ImageLayout::UNDEFINED,
         ),
     }

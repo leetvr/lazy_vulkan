@@ -44,6 +44,7 @@ impl ImageManager {
     /// Does not yet support mipmaps or multiple image layers.
     pub fn create_image(
         &mut self,
+        name: impl AsRef<str>,
         allocator: &mut Allocator,
         format: vk::Format,
         extent: vk::Extent2D,
@@ -77,6 +78,8 @@ impl ImageManager {
                 )
                 .unwrap()
         };
+
+        self.context.set_debug_label(handle, name.as_ref());
 
         let transfer_complete = allocator.allocate_image(image_bytes, extent, handle);
 
