@@ -113,7 +113,7 @@ impl Swapchain {
         };
 
         if suboptimal {
-            self.needs_update = true;
+            // self.needs_update = true;
         }
 
         Some(Drawable {
@@ -127,6 +127,7 @@ impl Swapchain {
     }
 
     pub fn resize(&mut self, device: &ash::Device) {
+        println!("Resizing swapchain!");
         // Create a new swapchain
         let (swapchain_handle, images, image_views) = build_swapchain(
             device,
@@ -183,6 +184,7 @@ fn build_swapchain(
     capabilities: vk::SurfaceCapabilitiesKHR,
     swapchain_fn: &ash::khr::swapchain::Device,
 ) -> (vk::SwapchainKHR, Vec<vk::Image>, Vec<vk::ImageView>) {
+    log::debug!("Building swapchain with extent {extent:?}");
     let swapchain_handle = unsafe {
         swapchain_fn.create_swapchain(
             &vk::SwapchainCreateInfoKHR::default()

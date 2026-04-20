@@ -16,8 +16,6 @@ pub struct Pipeline {
     context: Arc<Context>,
     // Avoids having to pass &Descriptors around at draw time
     pub descriptor_set: vk::DescriptorSet,
-    vertex_shader_path: PathBuf,
-    fragment_shader_path: PathBuf,
     format: vk::Format,
     options: PipelineOptions,
 }
@@ -28,8 +26,8 @@ impl Pipeline {
         context: Arc<Context>,
         descriptors: &Descriptors,
         colour_format: vk::Format,
-        vertex_shader: impl AsRef<Path>,
-        fragment_shader: impl AsRef<Path>,
+        vertex_shader: &[u8],
+        fragment_shader: &[u8],
         options: PipelineOptions,
     ) -> Self {
         let device = &context.device;
@@ -46,16 +44,13 @@ impl Pipeline {
         }
         .unwrap();
 
-        let vertex_shader_path = vertex_shader.as_ref();
-        let fragment_shader_path = fragment_shader.as_ref();
-
         let handle = create_pipeline::<Registers>(
             &context,
             colour_format,
             &options,
             layout,
-            vertex_shader_path,
-            fragment_shader_path,
+            vertex_shader,
+            fragment_shader,
         );
 
         Self {
@@ -63,8 +58,6 @@ impl Pipeline {
             layout,
             handle,
             descriptor_set: descriptors.set,
-            vertex_shader_path: vertex_shader_path.into(),
-            fragment_shader_path: fragment_shader_path.into(),
             format: colour_format,
             options,
         }
@@ -97,28 +90,28 @@ impl Pipeline {
         }
     }
 
-    pub fn reload<Registers>(&mut self) {
-        self.handle = create_pipeline::<Registers>(
-            &self.context,
-            self.format,
-            &self.options,
-            self.layout,
-            &self.vertex_shader_path,
-            &self.fragment_shader_path,
-        );
-    }
+    // pub fn reload<Registers>(&mut self) {
+    //     self.handle = create_pipeline::<Registers>(
+    //         &self.context,
+    //         self.format,
+    //         &self.options,
+    //         self.layout,
+    //         &self.vertex_shader_path,
+    //         &self.fragment_shader_path,
+    //     );
+    // }
 
-    pub fn reload_with_new_options<Registers>(&mut self, options: PipelineOptions) {
-        self.options = options;
-        self.handle = create_pipeline::<Registers>(
-            &self.context,
-            self.format,
-            &self.options,
-            self.layout,
-            &self.vertex_shader_path,
-            &self.fragment_shader_path,
-        );
-    }
+    // pub fn reload_with_new_options<Registers>(&mut self, options: PipelineOptions) {
+    //     self.options = options;
+    //     self.handle = create_pipeline::<Registers>(
+    //         &self.context,
+    //         self.format,
+    //         &self.options,
+    //         self.layout,
+    //         &self.vertex_shader_path,
+    //         &self.fragment_shader_path,
+    //     );
+    // }
 }
 
 fn create_pipeline<Registers>(
@@ -126,8 +119,8 @@ fn create_pipeline<Registers>(
     colour_format: vk::Format,
     options: &PipelineOptions,
     layout: vk::PipelineLayout,
-    vertex_shader_path: &Path,
-    fragment_shader_path: &Path,
+    vertex_shader: &[u8],
+    fragment_shader: &[u8],
 ) -> vk::Pipeline {
     let device = &context.device;
 
@@ -156,11 +149,11 @@ fn create_pipeline<Registers>(
                 .stages(&[
                     vk::PipelineShaderStageCreateInfo::default()
                         .name(c"main")
-                        .module(load_module(vertex_shader_path, context))
+                        .module(load_module(vertex_shader, context))
                         .stage(vk::ShaderStageFlags::VERTEX),
                     vk::PipelineShaderStageCreateInfo::default()
                         .name(c"main")
-                        .module(load_module(fragment_shader_path, context))
+                        .module(load_module(fragment_shader, context))
                         .stage(vk::ShaderStageFlags::FRAGMENT),
                 ])
                 .vertex_input_state(&vk::PipelineVertexInputStateCreateInfo::default())
@@ -233,9 +226,9 @@ fn get_blend_attachment(blend_mode: BlendMode) -> vk::PipelineColorBlendAttachme
     }
 }
 
-pub fn load_module(path: impl AsRef<Path>, context: &Context) -> vk::ShaderModule {
-    let mut file = std::fs::File::open(path).unwrap();
-    let words = ash::util::read_spv(&mut file).unwrap();
+pub fn load_module(module: &[u8], context: &Context) -> vk::ShaderModule {
+    let mut module_cursor = std::io::Cursor::new(module);
+    let words = ash::util::read_spv(&mut module_cursor).unwrap();
 
     unsafe {
         context

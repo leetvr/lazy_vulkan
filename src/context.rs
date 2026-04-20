@@ -17,10 +17,6 @@ pub struct Context {
     pub device_type: vk::PhysicalDeviceType,
     pub device_properties: vk::PhysicalDeviceProperties,
     debug_utils: Option<ash::ext::debug_utils::Device>,
-    #[cfg(target_vendor = "apple")]
-    pub dynamic_rendering_pfn: ash::khr::dynamic_rendering::Device,
-    #[cfg(target_vendor = "apple")]
-    pub sync2_pfn: ash::khr::synchronization2::Device,
     #[cfg(not(target_vendor = "apple"))]
     pub acceleration_structure_pfn: ash::khr::acceleration_structure::Device,
     #[cfg(not(target_vendor = "apple"))]
@@ -89,13 +85,6 @@ impl Context {
         let physical_device_properties =
             unsafe { instance.get_physical_device_properties(physical_device) };
 
-        #[cfg(any(target_os = "macos", target_os = "ios"))]
-        let dynamic_rendering_pfn =
-            ash::khr::dynamic_rendering::Device::new(&core.instance, &device);
-
-        #[cfg(any(target_os = "macos", target_os = "ios"))]
-        let sync2_pfn = ash::khr::synchronization2::Device::new(&core.instance, &device);
-
         #[cfg(not(target_vendor = "apple"))]
         let acceleration_structure_pfn =
             ash::khr::acceleration_structure::Device::new(&core.instance, &device);
@@ -144,14 +133,11 @@ impl Context {
             debug_utils,
             device_type: physical_device_properties.device_type,
             device_properties: physical_device_properties,
-            #[cfg(any(target_os = "macos", target_os = "ios"))]
-            dynamic_rendering_pfn,
-            #[cfg(any(target_os = "macos", target_os = "ios"))]
-            sync2_pfn,
             #[cfg(not(target_vendor = "apple"))]
             acceleration_structure_pfn,
             #[cfg(not(target_vendor = "apple"))]
             ray_tracing_pipeline_pfn,
+            #[cfg(not(target_vendor = "apple"))]
             raytracing_properties,
         }
     }
@@ -184,7 +170,7 @@ impl Context {
         None
     }
 
-    #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+    // #[cfg(not(any(target_os = "macos", target_os = "ios")))]
     pub unsafe fn cmd_pipeline_barrier2(
         &self,
         command_buffer: vk::CommandBuffer,
@@ -194,17 +180,17 @@ impl Context {
             .cmd_pipeline_barrier2(command_buffer, dependency_info);
     }
 
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
-    pub unsafe fn cmd_pipeline_barrier2(
-        &self,
-        command_buffer: vk::CommandBuffer,
-        dependency_info: &vk::DependencyInfo,
-    ) {
-        self.sync2_pfn
-            .cmd_pipeline_barrier2(command_buffer, dependency_info);
-    }
+    // #[cfg(any(target_os = "macos", target_os = "ios"))]
+    // pub unsafe fn cmd_pipeline_barrier2(
+    //     &self,
+    //     command_buffer: vk::CommandBuffer,
+    //     dependency_info: &vk::DependencyInfo,
+    // ) {
+    //     self.sync2_pfn
+    //         .cmd_pipeline_barrier2(command_buffer, dependency_info);
+    // }
 
-    #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+    // #[cfg(not(any(target_os = "macos", target_os = "ios")))]
     pub unsafe fn cmd_begin_rendering(
         &self,
         command_buffer: vk::CommandBuffer,
@@ -214,27 +200,27 @@ impl Context {
             .cmd_begin_rendering(command_buffer, rendering_info);
     }
 
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
-    pub unsafe fn cmd_begin_rendering(
-        &self,
-        command_buffer: vk::CommandBuffer,
-        rendering_info: &vk::RenderingInfo,
-    ) {
-        self.dynamic_rendering_pfn
-            .cmd_begin_rendering(command_buffer, rendering_info);
-    }
+    // #[cfg(any(target_os = "macos", target_os = "ios"))]
+    // pub unsafe fn cmd_begin_rendering(
+    //     &self,
+    //     command_buffer: vk::CommandBuffer,
+    //     rendering_info: &vk::RenderingInfo,
+    // ) {
+    //     self.dynamic_rendering_pfn
+    //         .cmd_begin_rendering(command_buffer, rendering_info);
+    // }
 
-    #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+    // #[cfg(not(any(target_os = "macos", target_os = "ios")))]
     pub unsafe fn cmd_end_rendering(&self, command_buffer: vk::CommandBuffer) {
         self.device.cmd_end_rendering(command_buffer);
     }
 
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
-    pub unsafe fn cmd_end_rendering(&self, command_buffer: vk::CommandBuffer) {
-        self.dynamic_rendering_pfn.cmd_end_rendering(command_buffer);
-    }
+    // #[cfg(any(target_os = "macos", target_os = "ios"))]
+    // pub unsafe fn cmd_end_rendering(&self, command_buffer: vk::CommandBuffer) {
+    //     self.dynamic_rendering_pfn.cmd_end_rendering(command_buffer);
+    // }
 
-    #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+    // #[cfg(not(any(target_os = "macos", target_os = "ios")))]
     pub unsafe fn queue_submit2(
         &self,
         queue: vk::Queue,
@@ -244,15 +230,15 @@ impl Context {
         self.device.queue_submit2(queue, submits, fence).unwrap()
     }
 
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
-    pub unsafe fn queue_submit2(
-        &self,
-        queue: vk::Queue,
-        submits: &[vk::SubmitInfo2KHR],
-        fence: vk::Fence,
-    ) {
-        self.sync2_pfn.queue_submit2(queue, submits, fence).unwrap()
-    }
+    // #[cfg(any(target_os = "macos", target_os = "ios"))]
+    // pub unsafe fn queue_submit2(
+    //     &self,
+    //     queue: vk::Queue,
+    //     submits: &[vk::SubmitInfo2KHR],
+    //     fence: vk::Fence,
+    // ) {
+    //     self.sync2_pfn.queue_submit2(queue, submits, fence).unwrap()
+    // }
 
     pub fn set_debug_label<T: ash::vk::Handle>(&self, handle: T, name: &str) {
         let Some(debug_utils) = &self.debug_utils else {
@@ -302,11 +288,7 @@ fn create_device(
     physical_device: vk::PhysicalDevice,
     enabled_extension_names: &mut Vec<*const c_char>,
 ) -> ash::Device {
-    enabled_extension_names.extend_from_slice(&[
-        ash::khr::portability_subset::NAME.as_ptr(),
-        ash::khr::dynamic_rendering::NAME.as_ptr(),
-        ash::khr::synchronization2::NAME.as_ptr(),
-    ]);
+    enabled_extension_names.extend_from_slice(&[ash::khr::portability_subset::NAME.as_ptr()]);
 
     let device = unsafe {
         instance.create_device(
@@ -322,14 +304,6 @@ fn create_device(
                         .sampler_anisotropy(true),
                 )
                 .push_next(
-                    &mut vk::PhysicalDeviceDynamicRenderingFeatures::default()
-                        .dynamic_rendering(true),
-                )
-                .push_next(
-                    &mut vk::PhysicalDeviceSynchronization2Features::default()
-                        .synchronization2(true),
-                )
-                .push_next(
                     &mut vk::PhysicalDeviceVulkan12Features::default()
                         .runtime_descriptor_array(true)
                         .descriptor_indexing(true)
@@ -340,8 +314,14 @@ fn create_device(
                         .scalar_block_layout(true),
                 )
                 .push_next(
+                    &mut vk::PhysicalDeviceVulkan13Features::default()
+                        .dynamic_rendering(true)
+                        .synchronization2(true),
+                )
+                .push_next(
                     &mut vk::PhysicalDeviceVulkan11Features::default()
                         .variable_pointers(true)
+                        .shader_draw_parameters(true)
                         .variable_pointers_storage_buffer(true),
                 ),
             None,
