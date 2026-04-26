@@ -16,7 +16,7 @@ use ash::vk;
 use super::context::Context;
 
 pub const GLOBAL_MEMORY_SIZE: u64 = 2u64 << 30; // 2GB
-pub const STAGING_MEMORY_SIZE: u64 = 100u64 << 20; // 100MB
+pub const STAGING_MEMORY_SIZE: u64 = 200u64 << 20; // 200MB
 
 pub struct Allocator {
     pub context: Arc<Context>,
