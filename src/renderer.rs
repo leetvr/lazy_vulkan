@@ -724,23 +724,26 @@ impl<SF: StateFamily> Renderer<SF> {
 
     pub fn create_pipeline<R>(
         &self,
-        vertex_shader: impl AsRef<Path>,
-        fragment_shader: impl AsRef<Path>,
+        vertex_shader_path: impl AsRef<Path>,
+        fragment_shader_path: impl AsRef<Path>,
     ) -> Pipeline {
+        let vertex_shader = std::fs::read(vertex_shader_path).unwrap();
+        let fragment_shader = std::fs::read(fragment_shader_path).unwrap();
+
         Pipeline::new::<R>(
             self.context.clone(),
             &self.descriptors,
             self.get_drawable_format(),
-            vertex_shader,
-            fragment_shader,
+            &vertex_shader,
+            &fragment_shader,
             Default::default(),
         )
     }
 
     pub fn create_pipeline_with_options<R>(
         &self,
-        vertex_shader: impl AsRef<Path>,
-        fragment_shader: impl AsRef<Path>,
+        vertex_shader: &[u8],
+        fragment_shader: &[u8],
         options: PipelineOptions,
     ) -> Pipeline {
         let colour_format = options.colour_format.unwrap_or(self.get_drawable_format());

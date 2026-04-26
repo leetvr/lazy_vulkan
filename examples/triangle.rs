@@ -125,10 +125,12 @@ impl<'a> ApplicationHandler for App {
             } => event_loop.exit(),
 
             WindowEvent::Resized(size) => {
+                println!("Resizing!");
                 let state = self.state.as_mut().unwrap();
                 state.lazy_vulkan.resize(size);
             }
             WindowEvent::RedrawRequested => {
+                println!("Drawing!");
                 let state = self.state.as_mut().unwrap();
                 state.t += state.last_render_time.elapsed().as_secs_f32();
                 let lazy_vulkan = &mut state.lazy_vulkan;
