@@ -775,6 +775,41 @@ impl<SF: StateFamily> Renderer<SF> {
         )
     }
 
+    pub fn create_sampled_image_from_png(
+        &mut self,
+        name: impl AsRef<str>,
+        path: impl AsRef<Path>,
+        format: vk::Format,
+    ) -> Image {
+        let image_data = std::fs::read(path).unwrap();
+        let mut decoder = png::Decoder::new(&image_data[..]);
+        decoder.set_transformations(png::Transformations::ALPHA);
+        let mut reader = decoder.read_info().unwrap();
+
+        // Allocate the output buffer.
+        let mut buf = vec![0; reader.output_buffer_size()];
+
+        // Read the next frame. An APNG might contain multiple frames.
+        let info = reader.next_frame(&mut buf).unwrap();
+
+        // Grab the bytes of the image.
+        let image_bytes = buf[..info.buffer_size()].to_vec();
+
+        let extent = vk::Extent2D {
+            width: info.width,
+            height: info.height,
+        };
+
+        self.image_manager.create_image(
+            name,
+            &mut self.allocator,
+            format,
+            extent,
+            image_bytes,
+            vk::ImageUsageFlags::SAMPLED,
+        )
+    }
+
     pub fn get_drawable_format(&self) -> vk::Format {
         match &self.swapchain {
             SwapchainBackend::WSI(swapchain) => swapchain.format,
