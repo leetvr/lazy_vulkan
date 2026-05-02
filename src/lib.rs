@@ -122,6 +122,7 @@ impl<SF: StateFamily> LazyVulkan<SF> {
                 extent: image.extent,
                 id: image.id,
                 format: attachment_info.format,
+                usage: attachment_info.usage,
             },
         );
     }
@@ -132,6 +133,45 @@ impl<SF: StateFamily> LazyVulkan<SF> {
 
     pub fn resize(&mut self, new_extent: impl IntoExtent) {
         self.renderer.resize(new_extent.into_extent());
+    }
+
+    pub fn resize_render_attachment(&mut self, name: &str, new_extent: vk::Extent2D) {
+        let attachment_info = self
+            .renderer
+            .render_attachments
+            .remove(name)
+            .expect(&format!("Render attachment {name} not found"));
+
+        // If the image already has the correct extent, skip resizing
+        if attachment_info.extent == new_extent {
+            self.renderer
+                .render_attachments
+                .insert(name.to_string(), attachment_info);
+            return;
+        }
+
+        let image = self.renderer.create_image(
+            name,
+            attachment_info.format,
+            new_extent,
+            &[],
+            attachment_info.usage,
+        );
+
+        self.renderer.render_attachments.insert(
+            name.to_string(),
+            RenderAttachment {
+                handle: image.handle,
+                view: image.view,
+                extent: image.extent,
+                id: image.id,
+                format: attachment_info.format,
+                usage: attachment_info.usage,
+            },
+        );
+
+        // TODO
+        // self.renderer.destroy_image(attachment_info.handle);
     }
 }
 

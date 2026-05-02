@@ -334,6 +334,7 @@ impl<SF: StateFamily> Renderer<SF> {
                 extent: drawable.extent,
                 format: self.get_drawable_format(),
                 id: 0, // unused
+                usage: vk::ImageUsageFlags::COLOR_ATTACHMENT,
             };
             self.transition_attachment(
                 drawable_render_attachment,
@@ -435,6 +436,7 @@ impl<SF: StateFamily> Renderer<SF> {
             extent: drawable.extent,
             format: self.get_drawable_format(),
             id: 0, // is is invalid to sample from the colour image during the opaque pass
+            usage: vk::ImageUsageFlags::COLOR_ATTACHMENT,
         });
 
         let drawable = drawable.clone(); // TODO

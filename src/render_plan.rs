@@ -40,4 +40,5 @@ pub struct RenderAttachment {
     pub extent: vk::Extent2D,
     pub format: vk::Format,
     pub id: u32,
+    pub usage: vk::ImageUsageFlags,
 }
