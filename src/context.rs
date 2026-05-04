@@ -374,6 +374,8 @@ fn create_device(
                         .descriptor_indexing(true)
                         .descriptor_binding_partially_bound(true)
                         .descriptor_binding_sampled_image_update_after_bind(true)
+                        .descriptor_binding_storage_buffer_update_after_bind(true)
+                        .descriptor_binding_uniform_buffer_update_after_bind(true)
                         .shader_sampled_image_array_non_uniform_indexing(true)
                         .buffer_device_address(true)
                         .scalar_block_layout(true),

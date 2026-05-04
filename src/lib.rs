@@ -19,6 +19,7 @@ mod core;
 mod depth_buffer;
 mod descriptors;
 mod draw_params;
+pub mod geometry;
 mod headless_swapchain;
 mod image_manager;
 mod pipeline;

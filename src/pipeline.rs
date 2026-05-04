@@ -1,7 +1,4 @@
-use std::{
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::sync::Arc;
 
 use ash::vk;
 
@@ -16,7 +13,9 @@ pub struct Pipeline {
     context: Arc<Context>,
     // Avoids having to pass &Descriptors around at draw time
     pub descriptor_set: vk::DescriptorSet,
+    #[allow(unused)]
     format: vk::Format,
+    #[allow(unused)]
     options: PipelineOptions,
 }
 
@@ -31,11 +30,15 @@ impl Pipeline {
         options: PipelineOptions,
     ) -> Self {
         let device = &context.device;
+        let descriptor_layout = options
+            .custom_descriptor_layout
+            .unwrap_or(descriptors.layout);
+        let descriptor_set = options.custom_descriptor_set.unwrap_or(descriptors.set);
 
         let layout = unsafe {
             device.create_pipeline_layout(
                 &vk::PipelineLayoutCreateInfo::default()
-                    .set_layouts(&[descriptors.layout])
+                    .set_layouts(&[descriptor_layout])
                     .push_constant_ranges(&[vk::PushConstantRange::default()
                         .size(std::mem::size_of::<Registers>() as u32)
                         .stage_flags(vk::ShaderStageFlags::ALL_GRAPHICS)]),
@@ -57,7 +60,7 @@ impl Pipeline {
             context,
             layout,
             handle,
-            descriptor_set: descriptors.set,
+            descriptor_set,
             format: colour_format,
             options,
         }
@@ -250,6 +253,10 @@ pub struct PipelineOptions {
     pub depth_bias_slope_factor: Option<f32>,
     /// Useful for more complex render setups
     pub colour_format: Option<vk::Format>,
+    /// You should be using BDA instead
+    pub custom_descriptor_layout: Option<vk::DescriptorSetLayout>,
+    /// You should be using BDA instead
+    pub custom_descriptor_set: Option<vk::DescriptorSet>,
 }
 
 impl Default for PipelineOptions {
@@ -262,6 +269,8 @@ impl Default for PipelineOptions {
             depth_bias_constant_factor: None,
             depth_bias_slope_factor: None,
             colour_format: None,
+            custom_descriptor_layout: None,
+            custom_descriptor_set: None,
         }
     }
 }
