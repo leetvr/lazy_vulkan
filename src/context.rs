@@ -1,6 +1,6 @@
-#[cfg(any(target_os = "macos", target_os = "ios"))]
+#[cfg(target_vendor = "apple")]
 use std::ffi::c_char;
-#[cfg(not(any(target_os = "macos", target_os = "ios")))]
+#[cfg(not(target_vendor = "apple"))]
 use std::os::raw::c_char;
 
 use ash::vk::{self, MemoryRequirements};
@@ -17,14 +17,16 @@ pub struct Context {
     pub device_type: vk::PhysicalDeviceType,
     pub device_properties: vk::PhysicalDeviceProperties,
     debug_utils: Option<ash::ext::debug_utils::Device>,
-    #[cfg(not(target_vendor = "apple"))]
+    // TODO: Split these into RTXContext
+    #[cfg(feature = "rtx_on")]
     pub acceleration_structure_pfn: ash::khr::acceleration_structure::Device,
-    #[cfg(not(target_vendor = "apple"))]
+    #[cfg(feature = "rtx_on")]
     pub ray_tracing_pipeline_pfn: ash::khr::ray_tracing_pipeline::Device,
-    #[cfg(not(target_vendor = "apple"))]
+    #[cfg(feature = "rtx_on")]
     pub raytracing_properties: RaytracingProperties,
 }
 
+#[cfg(feature = "rtx_on")]
 pub struct RaytracingProperties {
     pub min_acceleration_structure_scratch_offset_alignment: u32,
     pub shader_group_handle_size: u32,
@@ -85,25 +87,25 @@ impl Context {
         let physical_device_properties =
             unsafe { instance.get_physical_device_properties(physical_device) };
 
-        #[cfg(not(target_vendor = "apple"))]
+        #[cfg(feature = "rtx_on")]
         let acceleration_structure_pfn =
             ash::khr::acceleration_structure::Device::new(&core.instance, &device);
 
-        #[cfg(not(target_vendor = "apple"))]
+        #[cfg(feature = "rtx_on")]
         let ray_tracing_pipeline_pfn =
             ash::khr::ray_tracing_pipeline::Device::new(&core.instance, &device);
 
-        #[cfg(not(target_vendor = "apple"))]
+        #[cfg(feature = "rtx_on")]
         let mut ray_tracing_properties =
             vk::PhysicalDeviceRayTracingPipelinePropertiesKHR::default();
 
-        #[cfg(not(target_vendor = "apple"))]
+        #[cfg(feature = "rtx_on")]
         let mut acceleration_structure_properties =
             vk::PhysicalDeviceAccelerationStructurePropertiesKHR::default();
 
         let mut properties = vk::PhysicalDeviceProperties2::default();
 
-        #[cfg(not(target_vendor = "apple"))]
+        #[cfg(feature = "rtx_on")]
         {
             properties = properties
                 .push_next(&mut ray_tracing_properties)
@@ -112,7 +114,7 @@ impl Context {
 
         unsafe { instance.get_physical_device_properties2(physical_device, &mut properties) };
 
-        #[cfg(not(target_vendor = "apple"))]
+        #[cfg(feature = "rtx_on")]
         let raytracing_properties = RaytracingProperties {
             min_acceleration_structure_scratch_offset_alignment: acceleration_structure_properties
                 .min_acceleration_structure_scratch_offset_alignment,
@@ -133,11 +135,11 @@ impl Context {
             debug_utils,
             device_type: physical_device_properties.device_type,
             device_properties: physical_device_properties,
-            #[cfg(not(target_vendor = "apple"))]
+            #[cfg(feature = "rtx_on")]
             acceleration_structure_pfn,
-            #[cfg(not(target_vendor = "apple"))]
+            #[cfg(feature = "rtx_on")]
             ray_tracing_pipeline_pfn,
-            #[cfg(not(target_vendor = "apple"))]
+            #[cfg(feature = "rtx_on")]
             raytracing_properties,
         }
     }
@@ -170,7 +172,6 @@ impl Context {
         None
     }
 
-    // #[cfg(not(any(target_os = "macos", target_os = "ios")))]
     pub unsafe fn cmd_pipeline_barrier2(
         &self,
         command_buffer: vk::CommandBuffer,
@@ -180,17 +181,6 @@ impl Context {
             .cmd_pipeline_barrier2(command_buffer, dependency_info);
     }
 
-    // #[cfg(any(target_os = "macos", target_os = "ios"))]
-    // pub unsafe fn cmd_pipeline_barrier2(
-    //     &self,
-    //     command_buffer: vk::CommandBuffer,
-    //     dependency_info: &vk::DependencyInfo,
-    // ) {
-    //     self.sync2_pfn
-    //         .cmd_pipeline_barrier2(command_buffer, dependency_info);
-    // }
-
-    // #[cfg(not(any(target_os = "macos", target_os = "ios")))]
     pub unsafe fn cmd_begin_rendering(
         &self,
         command_buffer: vk::CommandBuffer,
@@ -200,27 +190,10 @@ impl Context {
             .cmd_begin_rendering(command_buffer, rendering_info);
     }
 
-    // #[cfg(any(target_os = "macos", target_os = "ios"))]
-    // pub unsafe fn cmd_begin_rendering(
-    //     &self,
-    //     command_buffer: vk::CommandBuffer,
-    //     rendering_info: &vk::RenderingInfo,
-    // ) {
-    //     self.dynamic_rendering_pfn
-    //         .cmd_begin_rendering(command_buffer, rendering_info);
-    // }
-
-    // #[cfg(not(any(target_os = "macos", target_os = "ios")))]
     pub unsafe fn cmd_end_rendering(&self, command_buffer: vk::CommandBuffer) {
         self.device.cmd_end_rendering(command_buffer);
     }
 
-    // #[cfg(any(target_os = "macos", target_os = "ios"))]
-    // pub unsafe fn cmd_end_rendering(&self, command_buffer: vk::CommandBuffer) {
-    //     self.dynamic_rendering_pfn.cmd_end_rendering(command_buffer);
-    // }
-
-    // #[cfg(not(any(target_os = "macos", target_os = "ios")))]
     pub unsafe fn queue_submit2(
         &self,
         queue: vk::Queue,
@@ -229,16 +202,6 @@ impl Context {
     ) {
         self.device.queue_submit2(queue, submits, fence).unwrap()
     }
-
-    // #[cfg(any(target_os = "macos", target_os = "ios"))]
-    // pub unsafe fn queue_submit2(
-    //     &self,
-    //     queue: vk::Queue,
-    //     submits: &[vk::SubmitInfo2KHR],
-    //     fence: vk::Fence,
-    // ) {
-    //     self.sync2_pfn.queue_submit2(queue, submits, fence).unwrap()
-    // }
 
     pub fn set_debug_label<T: ash::vk::Handle>(&self, handle: T, name: &str) {
         let Some(debug_utils) = &self.debug_utils else {
@@ -282,7 +245,7 @@ impl Context {
     }
 }
 
-#[cfg(any(target_os = "macos", target_os = "ios"))]
+#[cfg(target_vendor = "apple")]
 fn create_device(
     instance: &ash::Instance,
     physical_device: vk::PhysicalDevice,
@@ -301,6 +264,7 @@ fn create_device(
                 .enabled_features(
                     &vk::PhysicalDeviceFeatures::default()
                         .fill_mode_non_solid(true)
+                        .multi_draw_indirect(true)
                         .sampler_anisotropy(true),
                 )
                 .push_next(
@@ -331,76 +295,81 @@ fn create_device(
     device
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "ios")))]
+#[cfg(not(target_vendor = "apple"))]
 fn create_device(
     instance: &ash::Instance,
     physical_device: vk::PhysicalDevice,
     enabled_extension_names: &mut Vec<*const c_char>,
 ) -> ash::Device {
-    // TODO: hide this behind an "RTX ON"
-
-    let rtx_on = false;
-    if rtx_on {
+    #[cfg(feature = "rtx_on")]
+    {
         enabled_extension_names.push(ash::khr::acceleration_structure::NAME.as_ptr());
         enabled_extension_names.push(ash::khr::ray_tracing_pipeline::NAME.as_ptr());
         enabled_extension_names.push(ash::khr::deferred_host_operations::NAME.as_ptr());
         enabled_extension_names.push(ash::khr::shader_clock::NAME.as_ptr());
     }
 
-    let device = unsafe {
-        instance.create_device(
-            physical_device,
-            &vk::DeviceCreateInfo::default()
-                .enabled_extension_names(enabled_extension_names)
-                .queue_create_infos(&[vk::DeviceQueueCreateInfo::default()
-                    .queue_family_index(0)
-                    .queue_priorities(&[1.0])])
-                .enabled_features(
-                    &vk::PhysicalDeviceFeatures::default()
-                        .fill_mode_non_solid(true)
-                        .sampler_anisotropy(true)
-                        .shader_int64(true)
-                        .multi_draw_indirect(true),
-                )
-                .push_next(
-                    &mut vk::PhysicalDeviceVulkan11Features::default()
-                        .variable_pointers(true)
-                        .variable_pointers_storage_buffer(true)
-                        .shader_draw_parameters(true),
-                )
-                .push_next(
-                    &mut vk::PhysicalDeviceVulkan12Features::default()
-                        .runtime_descriptor_array(true)
-                        .descriptor_indexing(true)
-                        .descriptor_binding_partially_bound(true)
-                        .descriptor_binding_sampled_image_update_after_bind(true)
-                        .descriptor_binding_storage_buffer_update_after_bind(true)
-                        .descriptor_binding_uniform_buffer_update_after_bind(true)
-                        .shader_sampled_image_array_non_uniform_indexing(true)
-                        .draw_indirect_count(true)
-                        .buffer_device_address(true)
-                        .scalar_block_layout(true),
-                )
-                // .push_next(
-                //     &mut vk::PhysicalDeviceAccelerationStructureFeaturesKHR::default()
-                //         .acceleration_structure(true),
-                // )
-                // .push_next(
-                //     &mut vk::PhysicalDeviceRayTracingPipelineFeaturesKHR::default()
-                //         .ray_tracing_pipeline(true),
-                // )
-                // .push_next(
-                //     &mut vk::PhysicalDeviceShaderClockFeaturesKHR::default()
-                //         .shader_subgroup_clock(true),
-                // )
-                .push_next(
-                    &mut vk::PhysicalDeviceVulkan13Features::default()
-                        .dynamic_rendering(true)
-                        .synchronization2(true),
-                ),
-            None,
-        )
+    let queue_priorities = [1.0];
+    let queue_create_infos = [vk::DeviceQueueCreateInfo::default()
+        .queue_family_index(0)
+        .queue_priorities(&queue_priorities)];
+
+    let enabled_features = vk::PhysicalDeviceFeatures::default()
+        .fill_mode_non_solid(true)
+        .sampler_anisotropy(true)
+        .shader_int64(true)
+        .multi_draw_indirect(true);
+
+    let mut vulkan11_features = vk::PhysicalDeviceVulkan11Features::default()
+        .variable_pointers(true)
+        .variable_pointers_storage_buffer(true)
+        .shader_draw_parameters(true);
+
+    let mut vulkan12_features = vk::PhysicalDeviceVulkan12Features::default()
+        .runtime_descriptor_array(true)
+        .descriptor_indexing(true)
+        .descriptor_binding_partially_bound(true)
+        .descriptor_binding_sampled_image_update_after_bind(true)
+        .descriptor_binding_storage_buffer_update_after_bind(true)
+        .descriptor_binding_uniform_buffer_update_after_bind(true)
+        .shader_sampled_image_array_non_uniform_indexing(true)
+        .buffer_device_address(true)
+        .scalar_block_layout(true);
+
+    let mut vulkan13_features = vk::PhysicalDeviceVulkan13Features::default()
+        .dynamic_rendering(true)
+        .synchronization2(true);
+
+    #[cfg(feature = "rtx_on")]
+    let mut acceleration_structure_features =
+        vk::PhysicalDeviceAccelerationStructureFeaturesKHR::default().acceleration_structure(true);
+
+    #[cfg(feature = "rtx_on")]
+    let mut ray_tracing_pipeline_features =
+        vk::PhysicalDeviceRayTracingPipelineFeaturesKHR::default().ray_tracing_pipeline(true);
+
+    #[cfg(feature = "rtx_on")]
+    let mut shader_clock_features =
+        vk::PhysicalDeviceShaderClockFeaturesKHR::default().shader_subgroup_clock(true);
+
+    let mut device_create_info = vk::DeviceCreateInfo::default()
+        .enabled_extension_names(enabled_extension_names)
+        .queue_create_infos(&queue_create_infos)
+        .enabled_features(&enabled_features)
+        .push_next(&mut vulkan11_features)
+        .push_next(&mut vulkan12_features);
+
+    #[cfg(feature = "rtx_on")]
+    {
+        device_create_info = device_create_info
+            .push_next(&mut acceleration_structure_features)
+            .push_next(&mut ray_tracing_pipeline_features)
+            .push_next(&mut shader_clock_features);
     }
-    .unwrap();
+
+    device_create_info = device_create_info.push_next(&mut vulkan13_features);
+
+    let device =
+        unsafe { instance.create_device(physical_device, &device_create_info, None) }.unwrap();
     device
 }
