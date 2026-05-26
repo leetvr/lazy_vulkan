@@ -3,6 +3,7 @@ pub use allocator::{Allocator, BufferAllocation, SlabUpload, TransferToken};
 pub use ash::{self, vk};
 pub use context::Context;
 pub use core::Core;
+pub use descriptors::Descriptors;
 pub use draw_params::DrawParams;
 pub use headless_swapchain::HeadlessSwapchainImage;
 pub use image_manager::{Image, ImageManager};
