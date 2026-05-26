@@ -104,17 +104,22 @@ impl Pipeline {
     //     );
     // }
 
-    // pub fn reload_with_new_options<Registers>(&mut self, options: PipelineOptions) {
-    //     self.options = options;
-    //     self.handle = create_pipeline::<Registers>(
-    //         &self.context,
-    //         self.format,
-    //         &self.options,
-    //         self.layout,
-    //         &self.vertex_shader_path,
-    //         &self.fragment_shader_path,
-    //     );
-    // }
+    pub fn reload_with_new_options<Registers>(
+        &mut self,
+        options: PipelineOptions,
+        vertex_shader: &[u8],
+        fragment_shader: &[u8],
+    ) {
+        self.options = options;
+        self.handle = create_pipeline::<Registers>(
+            &self.context,
+            self.format,
+            &self.options,
+            self.layout,
+            vertex_shader,
+            fragment_shader,
+        );
+    }
 }
 
 fn create_pipeline<Registers>(
