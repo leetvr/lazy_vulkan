@@ -39,6 +39,14 @@ impl Descriptors {
             vk::DescriptorSetLayoutBindingFlagsCreateInfo::default().binding_flags(&flags);
 
         let layout = unsafe {
+            #[allow(unused_mut)]
+            let mut stage_flags = vk::ShaderStageFlags::COMPUTE | vk::ShaderStageFlags::FRAGMENT;
+
+            #[cfg(feature = "rtx_on")]
+            {
+                stage_flags |= vk::ShaderStageFlags::CLOSEST_HIT_KHR;
+            }
+
             device.create_descriptor_set_layout(
                 &vk::DescriptorSetLayoutCreateInfo::default()
                     .bindings(&[
@@ -46,8 +54,7 @@ impl Descriptors {
                         vk::DescriptorSetLayoutBinding {
                             binding: Self::TEXTURE_BINDING,
                             descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-                            stage_flags: vk::ShaderStageFlags::COMPUTE
-                                | vk::ShaderStageFlags::FRAGMENT,
+                            stage_flags,
                             descriptor_count: 1000,
                             ..Default::default()
                         },

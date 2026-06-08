@@ -334,6 +334,7 @@ fn create_device(
         .descriptor_binding_uniform_buffer_update_after_bind(true)
         .shader_sampled_image_array_non_uniform_indexing(true)
         .buffer_device_address(true)
+        .uniform_and_storage_buffer8_bit_access(true)
         .scalar_block_layout(true);
 
     let mut vulkan13_features = vk::PhysicalDeviceVulkan13Features::default()
