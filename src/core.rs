@@ -1,4 +1,4 @@
-use ash::vk::{self, LayerSettingTypeEXT};
+use ash::vk;
 use winit::raw_window_handle::HasDisplayHandle;
 
 pub struct Core {
@@ -36,7 +36,6 @@ impl Core {
         {
             instance_extensions.push(ash::khr::portability_enumeration::NAME.as_ptr());
             instance_extensions.push(ash::khr::get_physical_device_properties2::NAME.as_ptr());
-            instance_extensions.push(ash::ext::layer_settings::NAME.as_ptr());
             version = vk::API_VERSION_1_3;
             instance_create_flags = vk::InstanceCreateFlags::ENUMERATE_PORTABILITY_KHR;
         }
@@ -47,27 +46,13 @@ impl Core {
             instance_create_flags = vk::InstanceCreateFlags::default();
         }
 
-        let validation_layer = c"VK_LAYER_KHRONOS_validation";
-
-        let layer_setting = vk::LayerSettingEXT::default()
-            .layer_name(c"khronos_validation")
-            .setting_name(c"validate_core")
-            .ty(LayerSettingTypeEXT::BOOL32)
-            .values(&[1]);
-
-        let binding = [layer_setting];
-        let mut layer_settings_create_info =
-            vk::LayerSettingsCreateInfoEXT::default().settings(&binding);
-
         let instance = unsafe {
             entry
                 .create_instance(
                     &vk::InstanceCreateInfo::default()
                         .flags(instance_create_flags)
                         .enabled_extension_names(&instance_extensions)
-                        .enabled_layer_names(&[validation_layer.as_ptr()])
-                        .application_info(&vk::ApplicationInfo::default().api_version(version))
-                        .push_next(&mut layer_settings_create_info),
+                        .application_info(&vk::ApplicationInfo::default().api_version(version)),
                     None,
                 )
                 .unwrap()
