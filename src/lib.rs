@@ -1,5 +1,5 @@
 pub use crate::swapchain::Drawable;
-pub use allocator::{Allocator, BufferAllocation, SlabUpload, TransferToken};
+pub use allocator::{Allocator, BufferAllocation, ReadbackBuffer, SlabUpload, TransferToken};
 pub use ash::{self, vk};
 pub use context::Context;
 pub use core::Core;
@@ -87,6 +87,10 @@ impl<SF: StateFamily> LazyVulkan<SF> {
         if self.renderer.frame != 0 {
             self.renderer.allocator.transfers_complete();
         }
+    }
+
+    pub fn wait_for_previous_frame(&self) {
+        self.renderer.wait_for_previous_frame();
     }
 
     pub fn get_drawable(&mut self) -> Drawable {

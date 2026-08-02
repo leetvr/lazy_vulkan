@@ -16,7 +16,7 @@ use ash::vk;
 use super::context::Context;
 
 pub const GLOBAL_MEMORY_SIZE: u64 = 2u64 << 30; // 2GB
-pub const STAGING_MEMORY_SIZE: u64 = 200u64 << 20; // 200MB
+pub const STAGING_MEMORY_SIZE: u64 = 500u64 << 20; // 400MB
 
 pub struct Allocator {
     pub context: Arc<Context>,
@@ -104,6 +104,59 @@ impl Allocator {
         let size = memory_requirements.size;
 
         self.allocate_buffer_inner(align, handle, size)
+    }
+
+    pub fn allocate_readback(&mut self, size: usize) -> ReadbackBuffer {
+        let device = &self.context.device;
+        let handle = unsafe {
+            device.create_buffer(
+                &vk::BufferCreateInfo::default()
+                    .size(size as vk::DeviceSize)
+                    .usage(vk::BufferUsageFlags::TRANSFER_DST),
+                None,
+            )
+        }
+        .expect("failed to create readback buffer");
+        self.context
+            .set_debug_label(handle, "[lazy_vulkan] Readback Buffer");
+
+        let requirements = unsafe { device.get_buffer_memory_requirements(handle) };
+        let memory_type_index = self
+            .context
+            .find_memory_type_index(
+                &requirements,
+                vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+            )
+            .expect("no host-visible coherent memory type for readback");
+        let memory = unsafe {
+            device.allocate_memory(
+                &vk::MemoryAllocateInfo::default()
+                    .allocation_size(requirements.size)
+                    .memory_type_index(memory_type_index),
+                None,
+            )
+        }
+        .expect("failed to allocate readback memory");
+        unsafe {
+            device
+                .bind_buffer_memory(handle, memory, 0)
+                .expect("failed to bind readback memory");
+        }
+        let ptr = unsafe {
+            std::ptr::NonNull::new_unchecked(
+                device
+                    .map_memory(memory, 0, vk::WHOLE_SIZE, vk::MemoryMapFlags::empty())
+                    .expect("failed to map readback memory")
+                    .cast::<u8>(),
+            )
+        };
+
+        ReadbackBuffer {
+            handle,
+            memory,
+            ptr,
+            size,
+        }
     }
 
     fn allocate_buffer_inner<T: Sized>(
@@ -417,6 +470,29 @@ enum TransferDestination {
 }
 
 pub struct PendingFree;
+
+pub struct ReadbackBuffer {
+    pub handle: vk::Buffer,
+    #[allow(unused)]
+    memory: vk::DeviceMemory,
+    ptr: std::ptr::NonNull<u8>,
+    size: usize,
+}
+
+impl ReadbackBuffer {
+    pub fn size(&self) -> usize {
+        self.size
+    }
+
+    /// # Safety
+    /// The caller must ensure that GPU writes to this buffer have completed.
+    pub unsafe fn read<T: bytemuck::Pod>(&self) -> T {
+        assert_eq!(self.size, std::mem::size_of::<T>());
+        let bytes = unsafe { std::slice::from_raw_parts(self.ptr.as_ptr(), self.size) };
+        bytemuck::pod_read_unaligned(bytes)
+    }
+}
+
 pub struct BufferAllocation<T> {
     #[allow(unused)]
     pub size: vk::DeviceSize,
@@ -511,7 +587,7 @@ mod tests {
             )
         };
 
-        let readback = create_readback_buffer(context);
+        let readback = allocator.allocate_readback(data_a.len());
         unsafe {
             device.cmd_copy_buffer(
                 command_buffer,
@@ -525,10 +601,9 @@ mod tests {
         submit_and_wait(context, command_buffer);
         allocator.transfers_complete();
 
-        let readback_data =
-            unsafe { std::slice::from_raw_parts(readback.ptr.as_ptr(), data_a.len()) };
+        let readback_data = unsafe { readback.read::<[u8; 4]>() };
 
-        assert_eq!(&data_a, readback_data);
+        assert_eq!(data_a, readback_data);
     }
 
     #[test]

@@ -265,7 +265,8 @@ fn create_device(
                     &vk::PhysicalDeviceFeatures::default()
                         .fill_mode_non_solid(true)
                         .multi_draw_indirect(true)
-                        .sampler_anisotropy(true),
+                        .sampler_anisotropy(true)
+                        .shader_int16(true),
                 )
                 .push_next(
                     &mut vk::PhysicalDeviceVulkan12Features::default()
@@ -284,6 +285,8 @@ fn create_device(
                 )
                 .push_next(
                     &mut vk::PhysicalDeviceVulkan11Features::default()
+                        .storage_buffer16_bit_access(true)
+                        .storage_push_constant16(true)
                         .variable_pointers(true)
                         .shader_draw_parameters(true)
                         .variable_pointers_storage_buffer(true),
@@ -317,10 +320,13 @@ fn create_device(
     let enabled_features = vk::PhysicalDeviceFeatures::default()
         .fill_mode_non_solid(true)
         .sampler_anisotropy(true)
+        .shader_int16(true)
         .shader_int64(true)
         .multi_draw_indirect(true);
 
     let mut vulkan11_features = vk::PhysicalDeviceVulkan11Features::default()
+        .storage_buffer16_bit_access(true)
+        .storage_push_constant16(true)
         .variable_pointers(true)
         .variable_pointers_storage_buffer(true)
         .shader_draw_parameters(true);

@@ -40,7 +40,9 @@ impl Descriptors {
 
         let layout = unsafe {
             #[allow(unused_mut)]
-            let mut stage_flags = vk::ShaderStageFlags::COMPUTE | vk::ShaderStageFlags::FRAGMENT;
+            let mut stage_flags = vk::ShaderStageFlags::COMPUTE
+                | vk::ShaderStageFlags::VERTEX
+                | vk::ShaderStageFlags::FRAGMENT;
 
             #[cfg(feature = "rtx_on")]
             {

@@ -492,16 +492,24 @@ impl<SF: StateFamily> Renderer<SF> {
     }
 
     pub fn begin_command_buffer(&mut self) {
-        let device = &self.context.device;
         // Block the CPU until we're done rendering the previous frame
+        self.wait_for_previous_frame();
+
+        let device = &self.context.device;
         unsafe {
-            device
-                .wait_for_fences(&[self.fence], true, u64::MAX)
-                .unwrap();
             device.reset_fences(&[self.fence]).unwrap();
         }
 
         self.context.begin_command_buffer();
+    }
+
+    pub fn wait_for_previous_frame(&self) {
+        unsafe {
+            self.context
+                .device
+                .wait_for_fences(&[self.fence], true, u64::MAX)
+                .unwrap();
+        }
     }
 
     pub fn submit_and_present(&mut self, drawable: Drawable) {

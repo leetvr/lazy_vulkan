@@ -34,14 +34,21 @@ impl Pipeline {
             .custom_descriptor_layout
             .unwrap_or(descriptors.layout);
         let descriptor_set = options.custom_descriptor_set.unwrap_or(descriptors.set);
+        let push_constant_size = std::mem::size_of::<Registers>() as u32;
+        let push_constant_range = vk::PushConstantRange::default()
+            .size(push_constant_size)
+            .stage_flags(vk::ShaderStageFlags::ALL_GRAPHICS);
+        let push_constant_ranges = if push_constant_size == 0 {
+            &[][..]
+        } else {
+            std::slice::from_ref(&push_constant_range)
+        };
 
         let layout = unsafe {
             device.create_pipeline_layout(
                 &vk::PipelineLayoutCreateInfo::default()
                     .set_layouts(&[descriptor_layout])
-                    .push_constant_ranges(&[vk::PushConstantRange::default()
-                        .size(std::mem::size_of::<Registers>() as u32)
-                        .stage_flags(vk::ShaderStageFlags::ALL_GRAPHICS)]),
+                    .push_constant_ranges(push_constant_ranges),
                 None,
             )
         }
@@ -246,7 +253,7 @@ pub fn load_module(module: &[u8], context: &Context) -> vk::ShaderModule {
     .unwrap()
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PipelineOptions {
     pub cull_mode: vk::CullModeFlags,
     pub polygon_mode: vk::PolygonMode,
@@ -280,7 +287,7 @@ impl Default for PipelineOptions {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BlendMode {
     None,
     Alpha,
