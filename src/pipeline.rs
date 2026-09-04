@@ -44,10 +44,15 @@ impl Pipeline {
             std::slice::from_ref(&push_constant_range)
         };
 
+        let mut descriptor_layouts = vec![descriptor_layout];
+        if let Some(secondary_descriptor_layout) = options.secondary_descriptor_layout {
+            descriptor_layouts.push(secondary_descriptor_layout);
+        }
+
         let layout = unsafe {
             device.create_pipeline_layout(
                 &vk::PipelineLayoutCreateInfo::default()
-                    .set_layouts(&[descriptor_layout])
+                    .set_layouts(&descriptor_layouts)
                     .push_constant_ranges(push_constant_ranges),
                 None,
             )
@@ -269,6 +274,8 @@ pub struct PipelineOptions {
     pub custom_descriptor_layout: Option<vk::DescriptorSetLayout>,
     /// You should be using BDA instead
     pub custom_descriptor_set: Option<vk::DescriptorSet>,
+    /// Optional descriptor set layout at set 1.
+    pub secondary_descriptor_layout: Option<vk::DescriptorSetLayout>,
 }
 
 impl Default for PipelineOptions {
@@ -283,6 +290,7 @@ impl Default for PipelineOptions {
             colour_format: None,
             custom_descriptor_layout: None,
             custom_descriptor_set: None,
+            secondary_descriptor_layout: None,
         }
     }
 }

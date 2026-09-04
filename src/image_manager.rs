@@ -128,7 +128,14 @@ impl ImageManager {
                 device.create_sampler(&sampler_create_info, None)
             }
             .unwrap();
-            unsafe { self.update_texture_descriptor_set(id, view, sampler) };
+            unsafe {
+                self.update_texture_descriptor_set(
+                    id,
+                    view,
+                    sampler,
+                    sampled_descriptor_layout(image_usage_flags),
+                )
+            };
         }
 
         Image {
@@ -146,6 +153,7 @@ impl ImageManager {
         texture_id: u32,
         image_view: vk::ImageView,
         sampler: vk::Sampler,
+        image_layout: vk::ImageLayout,
     ) {
         self.context.device.update_descriptor_sets(
             std::slice::from_ref(
@@ -154,7 +162,7 @@ impl ImageManager {
                         &vk::DescriptorImageInfo::default()
                             .sampler(sampler)
                             .image_view(image_view)
-                            .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL),
+                            .image_layout(image_layout),
                     ))
                     .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
                     .dst_array_element(texture_id)
@@ -169,5 +177,34 @@ impl ImageManager {
         let id = self.current_id;
         self.current_id += 1;
         id
+    }
+}
+
+fn sampled_descriptor_layout(usage: vk::ImageUsageFlags) -> vk::ImageLayout {
+    if usage.contains(vk::ImageUsageFlags::STORAGE) {
+        vk::ImageLayout::GENERAL
+    } else {
+        vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sampled_images_use_the_read_only_layout() {
+        assert_eq!(
+            sampled_descriptor_layout(vk::ImageUsageFlags::SAMPLED),
+            vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
+        );
+    }
+
+    #[test]
+    fn sampled_storage_images_use_the_general_layout() {
+        assert_eq!(
+            sampled_descriptor_layout(vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::STORAGE),
+            vk::ImageLayout::GENERAL
+        );
     }
 }
