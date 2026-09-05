@@ -275,6 +275,7 @@ fn create_device(
                         .descriptor_binding_partially_bound(true)
                         .descriptor_binding_sampled_image_update_after_bind(true)
                         .shader_sampled_image_array_non_uniform_indexing(true)
+                        .shader_output_layer(true)
                         .buffer_device_address(true)
                         .scalar_block_layout(true),
                 )
@@ -339,6 +340,7 @@ fn create_device(
         .descriptor_binding_storage_buffer_update_after_bind(true)
         .descriptor_binding_uniform_buffer_update_after_bind(true)
         .shader_sampled_image_array_non_uniform_indexing(true)
+        .shader_output_layer(true)
         .buffer_device_address(true)
         .uniform_and_storage_buffer8_bit_access(true)
         .scalar_block_layout(true);

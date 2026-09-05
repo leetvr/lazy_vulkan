@@ -112,12 +112,21 @@ impl<SF: StateFamily> LazyVulkan<SF> {
     }
 
     pub fn create_render_attachment(&mut self, attachment_info: RenderAttachmentInfo) {
-        let image = self.renderer.create_image(
+        self.create_render_attachment_with_layers(attachment_info, 1);
+    }
+
+    pub fn create_render_attachment_with_layers(
+        &mut self,
+        attachment_info: RenderAttachmentInfo,
+        array_layers: u32,
+    ) {
+        let image = self.renderer.create_image_with_layers(
             &attachment_info.name,
             attachment_info.format,
             attachment_info.extent,
             &[],
             attachment_info.usage,
+            array_layers,
         );
 
         self.renderer.render_attachments.insert(
@@ -129,6 +138,7 @@ impl<SF: StateFamily> LazyVulkan<SF> {
                 id: image.id,
                 format: attachment_info.format,
                 usage: attachment_info.usage,
+                array_layers,
             },
         );
     }
@@ -156,12 +166,13 @@ impl<SF: StateFamily> LazyVulkan<SF> {
             return;
         }
 
-        let image = self.renderer.create_image(
+        let image = self.renderer.create_image_with_layers(
             name,
             attachment_info.format,
             new_extent,
             &[],
             attachment_info.usage,
+            attachment_info.array_layers,
         );
 
         self.renderer.render_attachments.insert(
@@ -173,6 +184,7 @@ impl<SF: StateFamily> LazyVulkan<SF> {
                 id: image.id,
                 format: attachment_info.format,
                 usage: attachment_info.usage,
+                array_layers: attachment_info.array_layers,
             },
         );
 
