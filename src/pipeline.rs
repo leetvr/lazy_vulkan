@@ -161,6 +161,11 @@ fn create_pipeline<Registers>(
     } else {
         &[colour_format]
     };
+    let color_blend_attachments: &[vk::PipelineColorBlendAttachmentState] = if is_shadow_pass {
+        &[]
+    } else {
+        &[get_blend_attachment(options.blend_mode)]
+    };
 
     unsafe {
         device.create_graphics_pipelines(
@@ -210,7 +215,7 @@ fn create_pipeline<Registers>(
                 )
                 .color_blend_state(
                     &vk::PipelineColorBlendStateCreateInfo::default()
-                        .attachments(&[get_blend_attachment(options.blend_mode)]),
+                        .attachments(color_blend_attachments),
                 )
                 .multisample_state(
                     &vk::PipelineMultisampleStateCreateInfo::default()
