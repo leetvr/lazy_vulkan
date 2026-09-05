@@ -106,22 +106,37 @@ impl ImageManager {
         let mut sampler = vk::Sampler::null();
 
         if image_usage_flags.contains(vk::ImageUsageFlags::SAMPLED) {
+            let is_shadow_map = image_usage_flags.contains(
+                vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT | vk::ImageUsageFlags::SAMPLED,
+            );
             sampler = unsafe {
                 let mut sampler_create_info = vk::SamplerCreateInfo::default()
                     .min_filter(vk::Filter::LINEAR)
                     .mag_filter(vk::Filter::LINEAR)
-                    .address_mode_u(vk::SamplerAddressMode::REPEAT)
-                    .address_mode_v(vk::SamplerAddressMode::REPEAT)
-                    .anisotropy_enable(true)
+                    .address_mode_u(if is_shadow_map {
+                        vk::SamplerAddressMode::CLAMP_TO_BORDER
+                    } else {
+                        vk::SamplerAddressMode::REPEAT
+                    })
+                    .address_mode_v(if is_shadow_map {
+                        vk::SamplerAddressMode::CLAMP_TO_BORDER
+                    } else {
+                        vk::SamplerAddressMode::REPEAT
+                    })
+                    .address_mode_w(if is_shadow_map {
+                        vk::SamplerAddressMode::CLAMP_TO_BORDER
+                    } else {
+                        vk::SamplerAddressMode::REPEAT
+                    })
+                    .border_color(vk::BorderColor::FLOAT_OPAQUE_BLACK)
+                    .anisotropy_enable(!is_shadow_map)
                     .max_anisotropy(self.context.device_properties.limits.max_sampler_anisotropy);
 
                 // This is a little bit hacky, but reasonable. It doesn't really make a lot of
                 // sense to be creating an image with DEPTH_STENCIL and SAMPLED, but you don't
                 // want to use it as a shadow map.
-                if image_usage_flags.contains(
-                    vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT | vk::ImageUsageFlags::SAMPLED,
-                ) {
-                    sampler_create_info.compare_op = vk::CompareOp::LESS_OR_EQUAL;
+                if is_shadow_map {
+                    sampler_create_info.compare_op = vk::CompareOp::GREATER_OR_EQUAL;
                     sampler_create_info.compare_enable = vk::TRUE;
                 }
 
@@ -130,6 +145,7 @@ impl ImageManager {
             .unwrap();
             unsafe {
                 self.update_texture_descriptor_set(
+                    sampled_descriptor_binding(image_usage_flags),
                     id,
                     view,
                     sampler,
@@ -150,6 +166,7 @@ impl ImageManager {
 
     pub unsafe fn update_texture_descriptor_set(
         &self,
+        binding: u32,
         texture_id: u32,
         image_view: vk::ImageView,
         sampler: vk::Sampler,
@@ -166,7 +183,7 @@ impl ImageManager {
                     ))
                     .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
                     .dst_array_element(texture_id)
-                    .dst_binding(Descriptors::TEXTURE_BINDING)
+                    .dst_binding(binding)
                     .dst_set(self.texture_descriptor_set),
             ),
             &[],
@@ -183,8 +200,18 @@ impl ImageManager {
 fn sampled_descriptor_layout(usage: vk::ImageUsageFlags) -> vk::ImageLayout {
     if usage.contains(vk::ImageUsageFlags::STORAGE) {
         vk::ImageLayout::GENERAL
+    } else if usage.contains(vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT) {
+        vk::ImageLayout::DEPTH_READ_ONLY_OPTIMAL
     } else {
         vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
+    }
+}
+
+fn sampled_descriptor_binding(usage: vk::ImageUsageFlags) -> u32 {
+    if usage.contains(vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT) {
+        Descriptors::SHADOW_TEXTURE_BINDING
+    } else {
+        Descriptors::TEXTURE_BINDING
     }
 }
 
@@ -205,6 +232,30 @@ mod tests {
         assert_eq!(
             sampled_descriptor_layout(vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::STORAGE),
             vk::ImageLayout::GENERAL
+        );
+    }
+
+    #[test]
+    fn sampled_depth_images_use_the_depth_read_only_layout() {
+        assert_eq!(
+            sampled_descriptor_layout(
+                vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT
+            ),
+            vk::ImageLayout::DEPTH_READ_ONLY_OPTIMAL
+        );
+    }
+
+    #[test]
+    fn sampled_depth_images_use_the_shadow_binding() {
+        assert_eq!(
+            sampled_descriptor_binding(
+                vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT
+            ),
+            Descriptors::SHADOW_TEXTURE_BINDING
+        );
+        assert_eq!(
+            sampled_descriptor_binding(vk::ImageUsageFlags::SAMPLED),
+            Descriptors::TEXTURE_BINDING
         );
     }
 }

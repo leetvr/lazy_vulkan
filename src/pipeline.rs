@@ -151,16 +151,22 @@ fn create_pipeline<Registers>(
         vk::PrimitiveTopology::LINE_LIST
     };
 
-    let is_shadow_pass =
+    let depth_bias_enabled =
         options.depth_bias_constant_factor.is_some() || options.depth_bias_slope_factor.is_some();
 
     let depth_bias_slope_factor = options.depth_bias_slope_factor.unwrap_or_default();
     let depth_bias_constant_factor = options.depth_bias_constant_factor.unwrap_or_default();
-    let color_attachment_formats: &[vk::Format] = if is_shadow_pass {
-        &[]
-    } else {
+    let color_attachment_formats: &[vk::Format] = if options.has_colour_attachment {
         &[colour_format]
+    } else {
+        &[]
     };
+    let color_blend_attachments: &[vk::PipelineColorBlendAttachmentState] =
+        if options.has_colour_attachment {
+            &[get_blend_attachment(options.blend_mode)]
+        } else {
+            &[]
+        };
 
     unsafe {
         device.create_graphics_pipelines(
@@ -194,7 +200,7 @@ fn create_pipeline<Registers>(
                         .front_face(vk::FrontFace::COUNTER_CLOCKWISE)
                         .cull_mode(options.cull_mode)
                         .polygon_mode(options.polygon_mode)
-                        .depth_bias_enable(is_shadow_pass)
+                        .depth_bias_enable(depth_bias_enabled)
                         .depth_bias_slope_factor(depth_bias_slope_factor)
                         .depth_bias_constant_factor(depth_bias_constant_factor)
                         .line_width(1.0),
@@ -210,7 +216,7 @@ fn create_pipeline<Registers>(
                 )
                 .color_blend_state(
                     &vk::PipelineColorBlendStateCreateInfo::default()
-                        .attachments(&[get_blend_attachment(options.blend_mode)]),
+                        .attachments(color_blend_attachments),
                 )
                 .multisample_state(
                     &vk::PipelineMultisampleStateCreateInfo::default()
@@ -270,6 +276,8 @@ pub struct PipelineOptions {
     pub depth_bias_slope_factor: Option<f32>,
     /// Useful for more complex render setups
     pub colour_format: Option<vk::Format>,
+    /// Whether dynamic rendering binds a colour attachment.
+    pub has_colour_attachment: bool,
     /// You should be using BDA instead
     pub custom_descriptor_layout: Option<vk::DescriptorSetLayout>,
     /// You should be using BDA instead
@@ -288,6 +296,7 @@ impl Default for PipelineOptions {
             depth_bias_constant_factor: None,
             depth_bias_slope_factor: None,
             colour_format: None,
+            has_colour_attachment: true,
             custom_descriptor_layout: None,
             custom_descriptor_set: None,
             secondary_descriptor_layout: None,

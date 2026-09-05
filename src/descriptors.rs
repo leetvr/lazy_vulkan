@@ -13,13 +13,15 @@ pub struct Descriptors {
 
 impl Descriptors {
     pub const TEXTURE_BINDING: u32 = 0;
+    pub const SHADOW_TEXTURE_BINDING: u32 = 1;
+    const MAX_TEXTURES: u32 = 1000;
 
     pub fn new(context: Arc<Context>) -> Descriptors {
         let device = &context.device;
 
         let pool_sizes = [vk::DescriptorPoolSize {
             ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-            descriptor_count: 1000,
+            descriptor_count: Self::MAX_TEXTURES * 2,
         }];
 
         let pool = unsafe {
@@ -33,8 +35,12 @@ impl Descriptors {
         }
         .unwrap();
 
-        let flags = [vk::DescriptorBindingFlags::PARTIALLY_BOUND
-            | vk::DescriptorBindingFlags::UPDATE_AFTER_BIND];
+        let flags = [
+            vk::DescriptorBindingFlags::PARTIALLY_BOUND
+                | vk::DescriptorBindingFlags::UPDATE_AFTER_BIND,
+            vk::DescriptorBindingFlags::PARTIALLY_BOUND
+                | vk::DescriptorBindingFlags::UPDATE_AFTER_BIND,
+        ];
         let mut binding_flags =
             vk::DescriptorSetLayoutBindingFlagsCreateInfo::default().binding_flags(&flags);
 
@@ -52,12 +58,18 @@ impl Descriptors {
             device.create_descriptor_set_layout(
                 &vk::DescriptorSetLayoutCreateInfo::default()
                     .bindings(&[
-                        // Textures
                         vk::DescriptorSetLayoutBinding {
                             binding: Self::TEXTURE_BINDING,
                             descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
                             stage_flags,
-                            descriptor_count: 1000,
+                            descriptor_count: Self::MAX_TEXTURES,
+                            ..Default::default()
+                        },
+                        vk::DescriptorSetLayoutBinding {
+                            binding: Self::SHADOW_TEXTURE_BINDING,
+                            descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+                            stage_flags,
+                            descriptor_count: Self::MAX_TEXTURES,
                             ..Default::default()
                         },
                     ])
