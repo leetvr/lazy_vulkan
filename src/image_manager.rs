@@ -9,6 +9,7 @@ pub struct Image {
     pub handle: vk::Image,
     pub view: vk::ImageView,
     pub extent: vk::Extent2D,
+    pub mip_levels: u32,
     pub sampler: vk::Sampler,
     pub id: u32,
     pub transfer_complete: TransferToken,
@@ -41,7 +42,7 @@ impl ImageManager {
     ///   this is a shadowmap image and set the compare ops on the sampler accordingly.
     /// - If `format` is a depth format, we'll set the correct aspect flags on the iamge view
     ///
-    /// Does not yet support mipmaps or multiple image layers.
+    /// Does not yet support multiple image layers.
     pub fn create_image(
         &mut self,
         name: impl AsRef<str>,
@@ -50,6 +51,47 @@ impl ImageManager {
         extent: vk::Extent2D,
         image_bytes: impl AsRef<[u8]>,
         image_usage_flags: vk::ImageUsageFlags,
+    ) -> Image {
+        self.create_image_inner(
+            name,
+            allocator,
+            format,
+            extent,
+            image_bytes,
+            image_usage_flags,
+            1,
+        )
+    }
+
+    pub fn create_mipmapped_sampled_image(
+        &mut self,
+        name: impl AsRef<str>,
+        allocator: &mut Allocator,
+        format: vk::Format,
+        extent: vk::Extent2D,
+        image_bytes: impl AsRef<[u8]>,
+    ) -> Image {
+        let mip_levels = mip_level_count(extent);
+        self.create_image_inner(
+            name,
+            allocator,
+            format,
+            extent,
+            image_bytes,
+            vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_SRC,
+            mip_levels,
+        )
+    }
+
+    fn create_image_inner(
+        &mut self,
+        name: impl AsRef<str>,
+        allocator: &mut Allocator,
+        format: vk::Format,
+        extent: vk::Extent2D,
+        image_bytes: impl AsRef<[u8]>,
+        image_usage_flags: vk::ImageUsageFlags,
+        mip_levels: u32,
     ) -> Image {
         let id = if image_usage_flags.contains(vk::ImageUsageFlags::SAMPLED) {
             self.allocate_id()
@@ -67,7 +109,7 @@ impl ImageManager {
                         .image_type(vk::ImageType::TYPE_2D)
                         .format(format)
                         .extent(extent.into())
-                        .mip_levels(1)
+                        .mip_levels(mip_levels)
                         .array_layers(1)
                         .samples(vk::SampleCountFlags::TYPE_1)
                         .tiling(vk::ImageTiling::OPTIMAL)
@@ -81,7 +123,8 @@ impl ImageManager {
 
         self.context.set_debug_label(handle, name.as_ref());
 
-        let transfer_complete = allocator.allocate_image(image_bytes, extent, handle);
+        let transfer_complete =
+            allocator.allocate_image_with_mip_levels(image_bytes, extent, mip_levels, handle);
 
         let view = unsafe {
             // Another little hack.
@@ -113,6 +156,8 @@ impl ImageManager {
                 let mut sampler_create_info = vk::SamplerCreateInfo::default()
                     .min_filter(vk::Filter::LINEAR)
                     .mag_filter(vk::Filter::LINEAR)
+                    .mipmap_mode(vk::SamplerMipmapMode::LINEAR)
+                    .max_lod((mip_levels - 1) as f32)
                     .address_mode_u(if is_shadow_map {
                         vk::SamplerAddressMode::CLAMP_TO_BORDER
                     } else {
@@ -158,6 +203,7 @@ impl ImageManager {
             handle,
             view,
             extent,
+            mip_levels,
             id,
             sampler,
             transfer_complete,
@@ -197,6 +243,11 @@ impl ImageManager {
     }
 }
 
+fn mip_level_count(extent: vk::Extent2D) -> u32 {
+    assert!(extent.width > 0 && extent.height > 0);
+    extent.width.max(extent.height).ilog2() + 1
+}
+
 fn sampled_descriptor_layout(usage: vk::ImageUsageFlags) -> vk::ImageLayout {
     if usage.contains(vk::ImageUsageFlags::STORAGE) {
         vk::ImageLayout::GENERAL
@@ -218,6 +269,31 @@ fn sampled_descriptor_binding(usage: vk::ImageUsageFlags) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn full_mip_chain_reaches_one_by_one() {
+        assert_eq!(
+            mip_level_count(vk::Extent2D {
+                width: 2048,
+                height: 2048,
+            }),
+            12
+        );
+        assert_eq!(
+            mip_level_count(vk::Extent2D {
+                width: 1024,
+                height: 256,
+            }),
+            11
+        );
+        assert_eq!(
+            mip_level_count(vk::Extent2D {
+                width: 1,
+                height: 1,
+            }),
+            1
+        );
+    }
 
     #[test]
     fn sampled_images_use_the_read_only_layout() {

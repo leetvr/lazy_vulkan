@@ -203,6 +203,16 @@ impl Allocator {
         extent: vk::Extent2D,
         image: vk::Image,
     ) -> TransferToken {
+        self.allocate_image_with_mip_levels(data, extent, 1, image)
+    }
+
+    pub fn allocate_image_with_mip_levels(
+        &mut self,
+        data: &[u8],
+        extent: vk::Extent2D,
+        mip_levels: u32,
+        image: vk::Image,
+    ) -> TransferToken {
         let memory_requirements =
             unsafe { self.context.device.get_image_memory_requirements(image) };
         let size = memory_requirements.size;
@@ -228,7 +238,11 @@ impl Allocator {
         if !data.is_empty() {
             let staging_buffer_offset = self.staging_buffer.stage(data);
             self.pending_transfers.push(PendingTransfer {
-                destination: TransferDestination::Image(image, extent),
+                destination: TransferDestination::Image {
+                    image,
+                    extent,
+                    mip_levels,
+                },
                 transfer_size: data.len() as _,
                 transfer_token: ours,
                 staging_buffer_offset,
@@ -465,7 +479,11 @@ pub struct PendingTransfer {
 
 enum TransferDestination {
     Buffer(vk::Buffer),
-    Image(vk::Image, vk::Extent2D),
+    Image {
+        image: vk::Image,
+        extent: vk::Extent2D,
+        mip_levels: u32,
+    },
     Slab,
 }
 
@@ -933,6 +951,44 @@ mod tests {
             &data_b,
             &readback_data[data_a.len()..data_a.len() + data_b.len()]
         );
+    }
+
+    #[test]
+    fn test_mipmapped_image_upload_completes() {
+        let mut lazy_vulkan = get_vulkan();
+        let extent = vk::Extent2D {
+            width: 8,
+            height: 4,
+        };
+        let pixels = vec![128_u8; (extent.width * extent.height * 4) as usize];
+        let image = lazy_vulkan.renderer.create_mipmapped_sampled_image(
+            "mip upload test",
+            vk::Format::R8G8B8A8_UNORM,
+            extent,
+            &pixels,
+        );
+        assert_eq!(image.mip_levels, 4);
+
+        let context = &lazy_vulkan.context;
+        let command_buffer = context.draw_command_buffer;
+        unsafe {
+            context
+                .device
+                .begin_command_buffer(
+                    command_buffer,
+                    &vk::CommandBufferBeginInfo::default()
+                        .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT),
+                )
+                .unwrap();
+        }
+        lazy_vulkan
+            .renderer
+            .allocator
+            .execute_transfers(command_buffer);
+        submit_and_wait(context, command_buffer);
+        lazy_vulkan.renderer.allocator.transfers_complete();
+
+        assert!(image.transfer_complete.is_complete());
     }
 
     fn get_vulkan() -> LazyVulkan<()> {
