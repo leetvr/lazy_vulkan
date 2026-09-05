@@ -335,7 +335,6 @@ impl<SF: StateFamily> Renderer<SF> {
                 format: self.get_drawable_format(),
                 id: 0, // unused
                 usage: vk::ImageUsageFlags::COLOR_ATTACHMENT,
-                array_layers: 1,
             };
             self.transition_attachment(
                 drawable_render_attachment,
@@ -438,7 +437,6 @@ impl<SF: StateFamily> Renderer<SF> {
             format: self.get_drawable_format(),
             id: 0, // is is invalid to sample from the colour image during the opaque pass
             usage: vk::ImageUsageFlags::COLOR_ATTACHMENT,
-            array_layers: 1,
         });
 
         let drawable = drawable.clone(); // TODO
@@ -777,26 +775,13 @@ impl<SF: StateFamily> Renderer<SF> {
         image_bytes: impl AsRef<[u8]>,
         image_usage_flags: vk::ImageUsageFlags,
     ) -> Image {
-        self.create_image_with_layers(name, format, extent, image_bytes, image_usage_flags, 1)
-    }
-
-    pub fn create_image_with_layers(
-        &mut self,
-        name: impl AsRef<str>,
-        format: vk::Format,
-        extent: vk::Extent2D,
-        image_bytes: impl AsRef<[u8]>,
-        image_usage_flags: vk::ImageUsageFlags,
-        array_layers: u32,
-    ) -> Image {
-        self.image_manager.create_image_with_layers(
+        self.image_manager.create_image(
             name,
             &mut self.allocator,
             format,
             extent,
             image_bytes,
             image_usage_flags,
-            array_layers,
         )
     }
 
