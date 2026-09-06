@@ -80,12 +80,17 @@ impl StagingBuffer {
 
     pub fn stage(&mut self, data: &[u8]) -> usize {
         // Step one: copy the data into the staging buffer
+        // Compressed image copies require texel-block-aligned offsets (up to 16 bytes).
+        self.size = (self.size + 15) & !15;
         let staging_buffer_offset = self.size as usize;
 
         let transfer_size = data.len();
 
         if (staging_buffer_offset + transfer_size) > STAGING_MEMORY_SIZE as usize {
-            panic!("Staging buffer overflow. Transfer size: {transfer_size}, current staging buffer size: {}", self.size);
+            panic!(
+                "Staging buffer overflow. Transfer size: {transfer_size}, current staging buffer size: {}",
+                self.size
+            );
         }
 
         // We get the staging pointer by taking the base address and adding the current size of

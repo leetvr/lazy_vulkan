@@ -801,6 +801,22 @@ impl<SF: StateFamily> Renderer<SF> {
         )
     }
 
+    pub fn create_sampled_image_with_mips(
+        &mut self,
+        name: impl AsRef<str>,
+        format: vk::Format,
+        extent: vk::Extent2D,
+        levels: &[&[u8]],
+    ) -> Image {
+        self.image_manager.create_sampled_image_with_mips(
+            name,
+            &mut self.allocator,
+            format,
+            extent,
+            levels,
+        )
+    }
+
     pub fn create_sampled_image_from_png(
         &mut self,
         name: impl AsRef<str>,

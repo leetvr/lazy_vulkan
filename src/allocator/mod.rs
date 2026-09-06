@@ -213,6 +213,17 @@ impl Allocator {
         mip_levels: u32,
         image: vk::Image,
     ) -> TransferToken {
+        self.allocate_image_with_mip_data(data, extent, mip_levels, image, None)
+    }
+
+    pub(crate) fn allocate_image_with_mip_data(
+        &mut self,
+        data: &[u8],
+        extent: vk::Extent2D,
+        mip_levels: u32,
+        image: vk::Image,
+        mip_offsets: Option<Vec<vk::DeviceSize>>,
+    ) -> TransferToken {
         let memory_requirements =
             unsafe { self.context.device.get_image_memory_requirements(image) };
         let size = memory_requirements.size;
@@ -242,6 +253,7 @@ impl Allocator {
                     image,
                     extent,
                     mip_levels,
+                    mip_offsets,
                 },
                 transfer_size: data.len() as _,
                 transfer_token: ours,
@@ -483,6 +495,7 @@ enum TransferDestination {
         image: vk::Image,
         extent: vk::Extent2D,
         mip_levels: u32,
+        mip_offsets: Option<Vec<vk::DeviceSize>>,
     },
     Slab,
 }

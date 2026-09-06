@@ -60,6 +60,7 @@ impl ImageManager {
             image_bytes,
             image_usage_flags,
             1,
+            None,
         )
     }
 
@@ -80,6 +81,38 @@ impl ImageManager {
             image_bytes,
             vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_SRC,
             mip_levels,
+            None,
+        )
+    }
+
+    /// Upload supplied mip levels verbatim (including BCn blocks); never blit compressed data.
+    pub fn create_sampled_image_with_mips(
+        &mut self,
+        name: impl AsRef<str>,
+        allocator: &mut Allocator,
+        format: vk::Format,
+        extent: vk::Extent2D,
+        levels: &[&[u8]],
+    ) -> Image {
+        assert!(extent.width > 0 && extent.height > 0);
+        assert!(!levels.is_empty() && levels.len() <= mip_level_count(extent) as usize);
+        let mut bytes = Vec::new();
+        let mut offsets = Vec::with_capacity(levels.len());
+        for level in levels {
+            assert!(!level.is_empty());
+            bytes.resize((bytes.len() + 15) & !15, 0);
+            offsets.push(bytes.len() as vk::DeviceSize);
+            bytes.extend_from_slice(level);
+        }
+        self.create_image_inner(
+            name,
+            allocator,
+            format,
+            extent,
+            &bytes,
+            vk::ImageUsageFlags::SAMPLED,
+            levels.len() as u32,
+            Some(offsets),
         )
     }
 
@@ -92,6 +125,7 @@ impl ImageManager {
         image_bytes: impl AsRef<[u8]>,
         image_usage_flags: vk::ImageUsageFlags,
         mip_levels: u32,
+        mip_offsets: Option<Vec<vk::DeviceSize>>,
     ) -> Image {
         let id = if image_usage_flags.contains(vk::ImageUsageFlags::SAMPLED) {
             self.allocate_id()
@@ -123,8 +157,13 @@ impl ImageManager {
 
         self.context.set_debug_label(handle, name.as_ref());
 
-        let transfer_complete =
-            allocator.allocate_image_with_mip_levels(image_bytes, extent, mip_levels, handle);
+        let transfer_complete = allocator.allocate_image_with_mip_data(
+            image_bytes,
+            extent,
+            mip_levels,
+            handle,
+            mip_offsets,
+        );
 
         let view = unsafe {
             // Another little hack.

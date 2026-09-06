@@ -263,6 +263,11 @@ fn create_device(
                     .queue_priorities(&[1.0])])
                 .enabled_features(
                     &vk::PhysicalDeviceFeatures::default()
+                        .texture_compression_bc(
+                            unsafe { instance.get_physical_device_features(physical_device) }
+                                .texture_compression_bc
+                                == vk::TRUE,
+                        )
                         .fill_mode_non_solid(true)
                         .multi_draw_indirect(true)
                         .sampler_anisotropy(true)
@@ -318,6 +323,11 @@ fn create_device(
         .queue_priorities(&queue_priorities)];
 
     let enabled_features = vk::PhysicalDeviceFeatures::default()
+        .texture_compression_bc(
+            unsafe { instance.get_physical_device_features(physical_device) }
+                .texture_compression_bc
+                == vk::TRUE,
+        )
         .fill_mode_non_solid(true)
         .sampler_anisotropy(true)
         .shader_int16(true)

@@ -68,7 +68,9 @@ impl DeviceBuffer {
                     image,
                     extent,
                     mip_levels,
+                    ref mip_offsets,
                 } => {
+                    let mip_offsets = mip_offsets.clone();
                     image_transfer(
                         context,
                         staging_buffer,
@@ -77,6 +79,7 @@ impl DeviceBuffer {
                         image,
                         extent,
                         mip_levels,
+                        mip_offsets.as_deref(),
                     );
                 }
             }
@@ -92,6 +95,7 @@ fn image_transfer(
     image: vk::Image,
     extent: vk::Extent2D,
     mip_levels: u32,
+    mip_offsets: Option<&[vk::DeviceSize]>,
 ) {
     let device = &context.device;
 
@@ -109,23 +113,55 @@ fn image_transfer(
                     .new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL),
             ]),
         );
-        // Copy data from our buffer to the target image
-        device.cmd_copy_buffer_to_image(
-            command_buffer,
-            staging_buffer.handle,
-            image,
-            vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-            &[vk::BufferImageCopy::default()
-                .buffer_offset(pending.staging_buffer_offset as _)
+        let regions = if let Some(offsets) = mip_offsets {
+            offsets
+                .iter()
+                .enumerate()
+                .map(|(level, offset)| {
+                    vk::BufferImageCopy::default()
+                        .buffer_offset(pending.staging_buffer_offset as u64 + offset)
+                        .image_subresource(
+                            vk::ImageSubresourceLayers::default()
+                                .aspect_mask(vk::ImageAspectFlags::COLOR)
+                                .mip_level(level as u32)
+                                .layer_count(1),
+                        )
+                        .image_extent(vk::Extent3D {
+                            width: (extent.width >> level).max(1),
+                            height: (extent.height >> level).max(1),
+                            depth: 1,
+                        })
+                })
+                .collect::<Vec<_>>()
+        } else {
+            vec![vk::BufferImageCopy::default()
+                .buffer_offset(pending.staging_buffer_offset as u64)
                 .image_subresource(
                     vk::ImageSubresourceLayers::default()
                         .aspect_mask(vk::ImageAspectFlags::COLOR)
                         .layer_count(1),
                 )
-                .image_extent(extent.into())],
+                .image_extent(extent.into())]
+        };
+        device.cmd_copy_buffer_to_image(
+            command_buffer,
+            staging_buffer.handle,
+            image,
+            vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+            &regions,
         );
-
-        generate_mipmaps(context, command_buffer, image, extent, mip_levels);
+        if mip_offsets.is_some() {
+            transition_mip_to_shader_read(
+                context,
+                command_buffer,
+                image,
+                FULL_IMAGE,
+                vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                vk::AccessFlags2::TRANSFER_WRITE,
+            );
+        } else {
+            generate_mipmaps(context, command_buffer, image, extent, mip_levels);
+        }
     };
 
     pending.transfer_token.mark_completed();
@@ -328,7 +364,9 @@ impl DiscreteDeviceBuffer {
             _ => return,
         };
 
-        log::trace!("TRANSFER: {transfer_size} [src: {staging_buffer_offset}] -> [dst: {destination_offset}]");
+        log::trace!(
+            "TRANSFER: {transfer_size} [src: {staging_buffer_offset}] -> [dst: {destination_offset}]"
+        );
 
         // Issue the transfer
         unsafe {
