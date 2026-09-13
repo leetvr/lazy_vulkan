@@ -16,6 +16,7 @@ pub struct Context {
     pub memory_properties: vk::PhysicalDeviceMemoryProperties,
     pub device_type: vk::PhysicalDeviceType,
     pub device_properties: vk::PhysicalDeviceProperties,
+    pub(crate) timestamp_valid_bits: u32,
     debug_utils: Option<ash::ext::debug_utils::Device>,
     // TODO: Split these into RTXContext
     #[cfg(feature = "rtx_on")]
@@ -86,6 +87,10 @@ impl Context {
 
         let physical_device_properties =
             unsafe { instance.get_physical_device_properties(physical_device) };
+        let timestamp_valid_bits = unsafe {
+            instance.get_physical_device_queue_family_properties(physical_device)[0]
+                .timestamp_valid_bits
+        };
 
         #[cfg(feature = "rtx_on")]
         let acceleration_structure_pfn =
@@ -135,6 +140,7 @@ impl Context {
             debug_utils,
             device_type: physical_device_properties.device_type,
             device_properties: physical_device_properties,
+            timestamp_valid_bits,
             #[cfg(feature = "rtx_on")]
             acceleration_structure_pfn,
             #[cfg(feature = "rtx_on")]

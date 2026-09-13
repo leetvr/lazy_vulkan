@@ -11,6 +11,7 @@ use crate::{
     image_manager::ImageManager,
     render_plan::{AttachmentState, RenderStage},
     sub_renderer::{AttachmentInfo, LayerInfo, StateFamily, SubRenderer},
+    timestamp_queries::{TimestampQueries, TimestampQueryResults},
     HeadlessSwapchainImage, Image, Pipeline, PipelineOptions, RenderAttachment, RenderPlan,
 };
 use ash::vk::{self};
@@ -33,6 +34,7 @@ pub struct Renderer<SF: StateFamily> {
     swapchain: SwapchainBackend,
     /// Monotonically increasing frame counter
     pub frame: u32,
+    timestamp_queries: Option<TimestampQueries>,
 }
 
 impl<SF: StateFamily> Renderer<SF> {
@@ -67,6 +69,7 @@ impl<SF: StateFamily> Renderer<SF> {
             sub_renderers: Default::default(),
             render_attachments: Default::default(),
             frame: 0,
+            timestamp_queries: None,
         }
     }
 
@@ -510,6 +513,39 @@ impl<SF: StateFamily> Renderer<SF> {
                 .wait_for_fences(&[self.fence], true, u64::MAX)
                 .unwrap();
         }
+    }
+
+    pub fn prepare_timestamp_queries(&mut self, query_count: u32) -> Option<TimestampQueryResults> {
+        if self.context.timestamp_valid_bits == 0 {
+            return None;
+        }
+
+        let completed = self
+            .timestamp_queries
+            .as_ref()
+            .and_then(TimestampQueries::completed_results);
+        if query_count > 0
+            && self
+                .timestamp_queries
+                .as_ref()
+                .is_none_or(|queries| queries.capacity() < query_count)
+        {
+            self.timestamp_queries = Some(TimestampQueries::new(
+                self.context.clone(),
+                query_count.next_power_of_two(),
+            ));
+        }
+        if let Some(queries) = &mut self.timestamp_queries {
+            queries.begin_frame(self.frame, query_count);
+        }
+        completed
+    }
+
+    pub fn write_timestamp(&self, query: u32, stage: vk::PipelineStageFlags2) {
+        self.timestamp_queries
+            .as_ref()
+            .expect("prepare timestamp queries before writing")
+            .write(query, stage);
     }
 
     pub fn submit_and_present(&mut self, drawable: Drawable) {

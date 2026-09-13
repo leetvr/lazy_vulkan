@@ -13,6 +13,7 @@ pub use renderer::Renderer;
 use std::sync::Arc;
 pub use sub_renderer::{AttachmentInfo, LayerInfo, StateFamily, SubRenderer};
 use swapchain::Swapchain;
+pub use timestamp_queries::TimestampQueryResults;
 
 mod allocator;
 mod context;
@@ -28,6 +29,7 @@ mod render_plan;
 mod renderer;
 mod sub_renderer;
 mod swapchain;
+mod timestamp_queries;
 
 pub struct LazyVulkan<SF: StateFamily> {
     pub core: Arc<Core>,
@@ -91,6 +93,20 @@ impl<SF: StateFamily> LazyVulkan<SF> {
 
     pub fn wait_for_previous_frame(&self) {
         self.renderer.wait_for_previous_frame();
+    }
+
+    /// Resolves the previous submitted batch and resets enough timestamp queries for this frame.
+    /// Call after `begin_commands` and before writing timestamps.
+    pub fn prepare_timestamp_queries(&mut self, query_count: u32) -> Option<TimestampQueryResults> {
+        self.renderer.prepare_timestamp_queries(query_count)
+    }
+
+    pub fn timestamp_queries_supported(&self) -> bool {
+        self.context.timestamp_valid_bits > 0
+    }
+
+    pub fn write_timestamp(&self, query: u32, stage: vk::PipelineStageFlags2) {
+        self.renderer.write_timestamp(query, stage);
     }
 
     pub fn get_drawable(&mut self) -> Drawable {
