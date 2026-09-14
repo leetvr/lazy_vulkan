@@ -495,7 +495,7 @@ pub fn init(extension_names: &mut Vec<*const std::ffi::c_char>) -> (ash::Entry, 
         .application_version(0)
         .engine_name(app_name)
         .engine_version(0)
-        .api_version(vk::make_api_version(0, 1, 2, 0));
+        .api_version(vk::API_VERSION_1_3);
 
     let create_flags = if cfg!(any(target_os = "macos", target_os = "ios")) {
         vk::InstanceCreateFlags::ENUMERATE_PORTABILITY_KHR

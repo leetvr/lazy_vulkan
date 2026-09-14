@@ -27,6 +27,8 @@ pub struct Allocator {
     backend: DeviceBuffer,
     staging_buffer: StagingBuffer,
     pending_tokens: Vec<TransferToken>,
+    // Retained like pooled image allocations; image release is not implemented yet.
+    depth_image_memory: Vec<vk::DeviceMemory>,
 }
 
 impl Allocator {
@@ -43,6 +45,7 @@ impl Allocator {
             pending_transfers: Default::default(),
             staging_buffer,
             pending_tokens: Default::default(),
+            depth_image_memory: Default::default(),
         }
     }
 
@@ -101,6 +104,7 @@ impl Allocator {
         .unwrap();
 
         let memory_requirements = unsafe { device.get_buffer_memory_requirements(handle) };
+        let align = align.max(memory_requirements.alignment);
         let size = memory_requirements.size;
 
         self.allocate_buffer_inner(align, handle, size)
@@ -195,6 +199,35 @@ impl Allocator {
             global_offset: offset,
             _phantom: PhantomData,
         }
+    }
+
+    pub(crate) fn allocate_depth_image(&mut self, image: vk::Image) -> TransferToken {
+        let device = &self.context.device;
+        let requirements = unsafe { device.get_image_memory_requirements(image) };
+        let memory_type_index = self
+            .context
+            .find_memory_type_index(&requirements, vk::MemoryPropertyFlags::DEVICE_LOCAL)
+            .expect("No compatible memory type for depth/stencil image");
+
+        // Depth/stencil attachments can require private memory on macOS. There are few
+        // of them, so allocate each one directly instead of maintaining another pool.
+        let memory = unsafe {
+            device.allocate_memory(
+                &vk::MemoryAllocateInfo::default()
+                    .allocation_size(requirements.size)
+                    .memory_type_index(memory_type_index)
+                    .push_next(&mut vk::MemoryDedicatedAllocateInfo::default().image(image)),
+                None,
+            )
+        }
+        .expect("Failed to allocate depth/stencil image memory");
+        unsafe { device.bind_image_memory(image, memory, 0) }
+            .expect("Failed to bind depth/stencil image memory");
+        self.depth_image_memory.push(memory);
+
+        let token = TransferToken::default();
+        token.mark_completed();
+        token
     }
 
     pub fn allocate_image(
@@ -963,6 +996,67 @@ mod tests {
         assert_eq!(
             &data_b,
             &readback_data[data_a.len()..data_a.len() + data_b.len()]
+        );
+    }
+
+    #[test]
+    fn depth_attachments_do_not_consume_the_image_pool() {
+        let mut lazy_vulkan = get_vulkan();
+        let renderer = &mut lazy_vulkan.renderer;
+        let extent = vk::Extent2D {
+            width: 16,
+            height: 16,
+        };
+        let free_before = renderer
+            .allocator
+            .offset_allocator
+            .storage_report()
+            .total_free_space;
+
+        for usage in [
+            vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
+            vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT | vk::ImageUsageFlags::SAMPLED,
+        ] {
+            let image = renderer.create_image(
+                "depth allocation test",
+                vk::Format::D32_SFLOAT,
+                extent,
+                [],
+                usage,
+            );
+            assert!(image.transfer_complete.is_complete());
+        }
+
+        assert_eq!(renderer.allocator.depth_image_memory.len(), 2);
+        assert_ne!(
+            renderer.allocator.depth_image_memory[0],
+            renderer.allocator.depth_image_memory[1]
+        );
+        assert!(renderer.allocator.pending_transfers.is_empty());
+        assert_eq!(
+            renderer
+                .allocator
+                .offset_allocator
+                .storage_report()
+                .total_free_space,
+            free_before
+        );
+
+        renderer.create_image(
+            "pooled colour allocation test",
+            vk::Format::R8G8B8A8_UNORM,
+            extent,
+            [],
+            vk::ImageUsageFlags::COLOR_ATTACHMENT,
+        );
+        assert_eq!(renderer.allocator.depth_image_memory.len(), 2);
+        assert!(
+            renderer
+                .allocator
+                .offset_allocator
+                .storage_report()
+                .total_free_space
+                < free_before
         );
     }
 

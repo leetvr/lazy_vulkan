@@ -43,6 +43,7 @@ impl ImageManager {
     /// - If `format` is a depth format, we'll set the correct aspect flags on the iamge view
     ///
     /// Does not yet support multiple image layers.
+    /// Depth/stencil attachments are allocated individually and must have no upload data.
     pub fn create_image(
         &mut self,
         name: impl AsRef<str>,
@@ -135,6 +136,12 @@ impl ImageManager {
 
         let device = &self.context.device;
         let image_bytes = image_bytes.as_ref();
+        let is_depth_attachment =
+            image_usage_flags.contains(vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT);
+        assert!(
+            !is_depth_attachment || image_bytes.is_empty(),
+            "Depth/stencil attachment uploads are not supported"
+        );
 
         let handle = unsafe {
             device
@@ -157,13 +164,17 @@ impl ImageManager {
 
         self.context.set_debug_label(handle, name.as_ref());
 
-        let transfer_complete = allocator.allocate_image_with_mip_data(
-            image_bytes,
-            extent,
-            mip_levels,
-            handle,
-            mip_offsets,
-        );
+        let transfer_complete = if is_depth_attachment {
+            allocator.allocate_depth_image(handle)
+        } else {
+            allocator.allocate_image_with_mip_data(
+                image_bytes,
+                extent,
+                mip_levels,
+                handle,
+                mip_offsets,
+            )
+        };
 
         let view = unsafe {
             // Another little hack.
