@@ -385,6 +385,10 @@ impl Allocator {
         self.context.end_marker();
     }
 
+    pub fn check_staging_capacity(&self, bytes: usize) -> Result<(), AllocationError> {
+        self.staging_buffer.check_capacity(bytes)
+    }
+
     /// This should only be called when all transfers issued with `execute_transfers` have been
     /// actually completed.
     pub fn transfers_complete(&mut self) {

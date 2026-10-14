@@ -583,6 +583,12 @@ impl<SF: StateFamily> Renderer<SF> {
         self.frame += 1;
     }
 
+    // Ends and submits the recorded commands without acquiring or presenting a drawable.
+    pub fn submit_commands(&mut self) {
+        self.submit_command_buffer(&[], &[]);
+        self.allocator.submission_submitted();
+    }
+
     fn begin_rendering(&mut self, colour_attachment: &RenderAttachment) {
         let context = &self.context;
         let device = &context.device;
@@ -732,8 +738,6 @@ impl<SF: StateFamily> Renderer<SF> {
 
     fn submit_rendering(&self, drawable: &Drawable) {
         let context = &self.context;
-        let device = &context.device;
-        let queue = context.graphics_queue;
         let command_buffer = context.draw_command_buffer;
         unsafe {
             // Only WSI images have presentation ownership and layouts.
@@ -756,38 +760,47 @@ impl<SF: StateFamily> Renderer<SF> {
             }
             self.context.end_marker();
 
-            // End the command buffer
-            device.end_command_buffer(command_buffer).unwrap();
-
-            // Submit the work to the queue
-            // blegh
             if let Some(image_available) = drawable.image_available {
-                context.queue_submit2(
-                    queue,
-                    &[vk::SubmitInfo2::default()
-                        .command_buffer_infos(&[
-                            vk::CommandBufferSubmitInfo::default().command_buffer(command_buffer)
-                        ])
-                        .wait_semaphore_infos(&[vk::SemaphoreSubmitInfo::default()
-                            .semaphore(image_available)
-                            .stage_mask(
-                                vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT
-                                    | vk::PipelineStageFlags2::RESOLVE,
-                            )])
-                        .signal_semaphore_infos(&[vk::SemaphoreSubmitInfo::default()
-                            .semaphore(drawable.rendering_complete)
-                            .stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)])],
-                    self.fence,
+                self.submit_command_buffer(
+                    &[vk::SemaphoreSubmitInfo::default()
+                        .semaphore(image_available)
+                        .stage_mask(
+                            vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT
+                                | vk::PipelineStageFlags2::RESOLVE,
+                        )],
+                    &[vk::SemaphoreSubmitInfo::default()
+                        .semaphore(drawable.rendering_complete)
+                        .stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)],
                 );
             } else {
-                context.queue_submit2(
-                    queue,
-                    &[vk::SubmitInfo2::default().command_buffer_infos(&[
-                        vk::CommandBufferSubmitInfo::default().command_buffer(command_buffer),
-                    ])],
-                    self.fence,
-                );
+                self.submit_command_buffer(&[], &[]);
             }
+        }
+    }
+
+    fn submit_command_buffer(
+        &self,
+        waits: &[vk::SemaphoreSubmitInfo<'_>],
+        signals: &[vk::SemaphoreSubmitInfo<'_>],
+    ) {
+        let context = &self.context;
+        let commands =
+            [vk::CommandBufferSubmitInfo::default().command_buffer(context.draw_command_buffer)];
+        // The submission fence covers these command buffers, including upload copies.
+        // https://docs.vulkan.org/refpages/latest/refpages/source/vkQueueSubmit2.html
+        unsafe {
+            context
+                .device
+                .end_command_buffer(context.draw_command_buffer)
+                .unwrap();
+            context.queue_submit2(
+                context.graphics_queue,
+                &[vk::SubmitInfo2::default()
+                    .command_buffer_infos(&commands)
+                    .wait_semaphore_infos(waits)
+                    .signal_semaphore_infos(signals)],
+                self.fence,
+            );
         }
     }
 

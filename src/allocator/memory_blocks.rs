@@ -26,10 +26,16 @@ impl MemoryBlocks {
             context,
             blocks: Vec::new(),
         };
-        let block_limit = pool
+        let mut block_limit = pool
             .context
             .max_memory_allocation_size
             .min(pool.context.max_buffer_size);
+        // NVIDIA image bindings at offsets >=4 GiB can alias memory 4 GiB lower,
+        // despite the reported allocation limit. Keep every image offset below it.
+        // https://forums.developer.nvidia.com/t/385453
+        if pool.context.device_properties.vendor_id == 0x10de {
+            block_limit = block_limit.min(1 << 32);
+        }
         if block_limit == 0 {
             return Err(AllocationError::InvalidPoolConfiguration);
         }
