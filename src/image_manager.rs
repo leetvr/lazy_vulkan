@@ -62,6 +62,7 @@ impl ImageManager {
             image_usage_flags,
             1,
             None,
+            vk::SampleCountFlags::TYPE_1,
         )
     }
 
@@ -83,6 +84,7 @@ impl ImageManager {
             vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_SRC,
             mip_levels,
             None,
+            vk::SampleCountFlags::TYPE_1,
         )
     }
 
@@ -114,6 +116,39 @@ impl ImageManager {
             vk::ImageUsageFlags::SAMPLED,
             levels.len() as u32,
             Some(offsets),
+            vk::SampleCountFlags::TYPE_1,
+        )
+    }
+
+    /// Creates an attachment without upload data or mipmaps.
+    pub fn create_attachment(
+        &mut self,
+        name: impl AsRef<str>,
+        allocator: &mut Allocator,
+        format: vk::Format,
+        extent: vk::Extent2D,
+        usage: vk::ImageUsageFlags,
+        samples: vk::SampleCountFlags,
+    ) -> Image {
+        assert!(
+            samples.as_raw().is_power_of_two(),
+            "expected one sample count"
+        );
+        assert!(
+            samples == vk::SampleCountFlags::TYPE_1
+                || !usage.contains(vk::ImageUsageFlags::SAMPLED),
+            "multisampled images cannot use the ordinary texture descriptors"
+        );
+        self.create_image_inner(
+            name,
+            allocator,
+            format,
+            extent,
+            &[],
+            usage,
+            1,
+            None,
+            samples,
         )
     }
 
@@ -127,6 +162,7 @@ impl ImageManager {
         image_usage_flags: vk::ImageUsageFlags,
         mip_levels: u32,
         mip_offsets: Option<Vec<vk::DeviceSize>>,
+        samples: vk::SampleCountFlags,
     ) -> Image {
         let id = if image_usage_flags.contains(vk::ImageUsageFlags::SAMPLED) {
             self.allocate_id()
@@ -152,7 +188,7 @@ impl ImageManager {
                         .extent(extent.into())
                         .mip_levels(mip_levels)
                         .array_layers(1)
-                        .samples(vk::SampleCountFlags::TYPE_1)
+                        .samples(samples)
                         .tiling(vk::ImageTiling::OPTIMAL)
                         .usage(image_usage_flags | vk::ImageUsageFlags::TRANSFER_DST)
                         .sharing_mode(vk::SharingMode::EXCLUSIVE)
@@ -164,8 +200,8 @@ impl ImageManager {
 
         self.context.set_debug_label(handle, name.as_ref());
 
-        let transfer_complete = if is_depth_attachment {
-            allocator.allocate_depth_image(handle)
+        let transfer_complete = if is_depth_attachment || samples != vk::SampleCountFlags::TYPE_1 {
+            allocator.allocate_dedicated_image(handle)
         } else {
             allocator.allocate_image_with_mip_data(
                 image_bytes,

@@ -220,7 +220,7 @@ fn create_pipeline<Registers>(
                 )
                 .multisample_state(
                     &vk::PipelineMultisampleStateCreateInfo::default()
-                        .rasterization_samples(vk::SampleCountFlags::TYPE_1),
+                        .rasterization_samples(options.samples),
                 )
                 .layout(layout)
                 .push_next(
@@ -278,6 +278,7 @@ pub struct PipelineOptions {
     pub colour_format: Option<vk::Format>,
     /// Whether dynamic rendering binds a colour attachment.
     pub has_colour_attachment: bool,
+    pub samples: vk::SampleCountFlags,
     /// You should be using BDA instead
     pub custom_descriptor_layout: Option<vk::DescriptorSetLayout>,
     /// You should be using BDA instead
@@ -297,6 +298,7 @@ impl Default for PipelineOptions {
             depth_bias_slope_factor: None,
             colour_format: None,
             has_colour_attachment: true,
+            samples: vk::SampleCountFlags::TYPE_1,
             custom_descriptor_layout: None,
             custom_descriptor_set: None,
             secondary_descriptor_layout: None,

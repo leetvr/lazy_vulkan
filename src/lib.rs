@@ -132,12 +132,34 @@ impl<SF: StateFamily> LazyVulkan<SF> {
     }
 
     pub fn create_render_attachment(&mut self, attachment_info: RenderAttachmentInfo) {
-        let image = self.renderer.create_image(
+        assert!(
+            attachment_info.samples.as_raw().is_power_of_two(),
+            "expected one sample count"
+        );
+        let supported = unsafe {
+            self.core
+                .instance
+                .get_physical_device_image_format_properties(
+                    self.core.physical_device,
+                    attachment_info.format,
+                    vk::ImageType::TYPE_2D,
+                    vk::ImageTiling::OPTIMAL,
+                    attachment_info.usage | vk::ImageUsageFlags::TRANSFER_DST,
+                    vk::ImageCreateFlags::empty(),
+                )
+        }
+        .expect("unsupported attachment format/usage");
+        assert!(
+            supported.sample_counts.contains(attachment_info.samples),
+            "unsupported attachment sample count"
+        );
+        let image = self.renderer.image_manager.create_attachment(
             &attachment_info.name,
+            &mut self.renderer.allocator,
             attachment_info.format,
             attachment_info.extent,
-            &[],
             attachment_info.usage,
+            attachment_info.samples,
         );
 
         self.renderer.render_attachments.insert(
@@ -149,6 +171,7 @@ impl<SF: StateFamily> LazyVulkan<SF> {
                 id: image.id,
                 format: attachment_info.format,
                 usage: attachment_info.usage,
+                samples: attachment_info.samples,
             },
         );
     }
@@ -176,12 +199,13 @@ impl<SF: StateFamily> LazyVulkan<SF> {
             return;
         }
 
-        let image = self.renderer.create_image(
+        let image = self.renderer.image_manager.create_attachment(
             name,
+            &mut self.renderer.allocator,
             attachment_info.format,
             new_extent,
-            &[],
             attachment_info.usage,
+            attachment_info.samples,
         );
 
         self.renderer.render_attachments.insert(
@@ -193,6 +217,7 @@ impl<SF: StateFamily> LazyVulkan<SF> {
                 id: image.id,
                 format: attachment_info.format,
                 usage: attachment_info.usage,
+                samples: attachment_info.samples,
             },
         );
 
@@ -234,4 +259,5 @@ pub struct RenderAttachmentInfo {
     pub extent: vk::Extent2D,
     pub format: vk::Format,
     pub usage: vk::ImageUsageFlags,
+    pub samples: vk::SampleCountFlags,
 }

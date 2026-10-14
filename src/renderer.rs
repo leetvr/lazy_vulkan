@@ -336,6 +336,7 @@ impl<SF: StateFamily> Renderer<SF> {
 
             // Transition the swapchain image
             let drawable_render_attachment = RenderAttachment {
+                samples: vk::SampleCountFlags::TYPE_1,
                 handle: drawable.image,
                 view: drawable.view,
                 extent: drawable.extent,
@@ -438,6 +439,7 @@ impl<SF: StateFamily> Renderer<SF> {
             .begin_marker("Draw Opaque", glam::vec4(1.0, 0.0, 1.0, 1.0));
         // Begin opaque render pass
         self.begin_rendering(&RenderAttachment {
+            samples: vk::SampleCountFlags::TYPE_1,
             handle: drawable.image,
             view: drawable.view,
             extent: drawable.extent,
@@ -756,7 +758,10 @@ impl<SF: StateFamily> Renderer<SF> {
                         ])
                         .wait_semaphore_infos(&[vk::SemaphoreSubmitInfo::default()
                             .semaphore(image_available)
-                            .stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)])
+                            .stage_mask(
+                                vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT
+                                    | vk::PipelineStageFlags2::RESOLVE,
+                            )])
                         .signal_semaphore_infos(&[vk::SemaphoreSubmitInfo::default()
                             .semaphore(drawable.rendering_complete)
                             .stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)])],

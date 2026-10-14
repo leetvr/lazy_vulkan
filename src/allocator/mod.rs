@@ -28,7 +28,7 @@ pub struct Allocator {
     staging_buffer: StagingBuffer,
     pending_tokens: Vec<TransferToken>,
     // Retained like pooled image allocations; image release is not implemented yet.
-    depth_image_memory: Vec<vk::DeviceMemory>,
+    dedicated_image_memory: Vec<vk::DeviceMemory>,
 }
 
 impl Allocator {
@@ -45,7 +45,7 @@ impl Allocator {
             pending_transfers: Default::default(),
             staging_buffer,
             pending_tokens: Default::default(),
-            depth_image_memory: Default::default(),
+            dedicated_image_memory: Default::default(),
         }
     }
 
@@ -201,16 +201,16 @@ impl Allocator {
         }
     }
 
-    pub(crate) fn allocate_depth_image(&mut self, image: vk::Image) -> TransferToken {
+    pub(crate) fn allocate_dedicated_image(&mut self, image: vk::Image) -> TransferToken {
         let device = &self.context.device;
         let requirements = unsafe { device.get_image_memory_requirements(image) };
         let memory_type_index = self
             .context
             .find_memory_type_index(&requirements, vk::MemoryPropertyFlags::DEVICE_LOCAL)
-            .expect("No compatible memory type for depth/stencil image");
+            .expect("No compatible memory type for attachment image");
 
-        // Depth/stencil attachments can require private memory on macOS. There are few
-        // of them, so allocate each one directly instead of maintaining another pool.
+        // Depth/stencil and multisampled attachments may need different memory types
+        // from the general image pool. Allocate them using their own requirements.
         let memory = unsafe {
             device.allocate_memory(
                 &vk::MemoryAllocateInfo::default()
@@ -220,10 +220,10 @@ impl Allocator {
                 None,
             )
         }
-        .expect("Failed to allocate depth/stencil image memory");
+        .expect("Failed to allocate attachment image memory");
         unsafe { device.bind_image_memory(image, memory, 0) }
-            .expect("Failed to bind depth/stencil image memory");
-        self.depth_image_memory.push(memory);
+            .expect("Failed to bind attachment image memory");
+        self.dedicated_image_memory.push(memory);
 
         let token = TransferToken::default();
         token.mark_completed();
@@ -1048,10 +1048,10 @@ mod tests {
             assert!(image.transfer_complete.is_complete());
         }
 
-        assert_eq!(renderer.allocator.depth_image_memory.len(), 2);
+        assert_eq!(renderer.allocator.dedicated_image_memory.len(), 2);
         assert_ne!(
-            renderer.allocator.depth_image_memory[0],
-            renderer.allocator.depth_image_memory[1]
+            renderer.allocator.dedicated_image_memory[0],
+            renderer.allocator.dedicated_image_memory[1]
         );
         assert!(renderer.allocator.pending_transfers.is_empty());
         assert_eq!(
@@ -1070,7 +1070,7 @@ mod tests {
             [],
             vk::ImageUsageFlags::COLOR_ATTACHMENT,
         );
-        assert_eq!(renderer.allocator.depth_image_memory.len(), 2);
+        assert_eq!(renderer.allocator.dedicated_image_memory.len(), 2);
         assert!(
             renderer
                 .allocator
