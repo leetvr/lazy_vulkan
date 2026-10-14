@@ -94,17 +94,20 @@ impl MeshRenderer {
 
         // Allocate some resources
         let allocator = &mut renderer.allocator;
-        let mut buffer =
-            allocator.allocate_buffer(10 * 1024 * 1024, vk::BufferUsageFlags::STORAGE_BUFFER);
+        let mut buffer = allocator
+            .allocate_buffer(10 * 1024 * 1024, vk::BufferUsageFlags::STORAGE_BUFFER)
+            .unwrap();
         let initial_upload = allocator.append_to_buffer(&CUBE_VERTICES, &mut buffer);
         let (image_bytes, extent) = decode_png(Path::new("examples/vulkan.png"));
-        let logo_image = renderer.create_image(
-            "Vulkan Logo",
-            vk::Format::R8G8B8A8_SRGB,
-            extent,
-            image_bytes,
-            vk::ImageUsageFlags::SAMPLED,
-        );
+        let logo_image = renderer
+            .create_image(
+                "Vulkan Logo",
+                vk::Format::R8G8B8A8_SRGB,
+                extent,
+                image_bytes,
+                vk::ImageUsageFlags::SAMPLED,
+            )
+            .unwrap();
 
         Self {
             pipeline,
@@ -241,7 +244,7 @@ impl<'a> ApplicationHandler for App {
             )
             .unwrap();
 
-        let mut lazy_vulkan = LazyVulkan::from_window(&window);
+        let mut lazy_vulkan = LazyVulkan::from_window(&window, 2 << 30, 500 << 20).unwrap();
         let sub_renderer = MeshRenderer::new(&mut lazy_vulkan.renderer);
         lazy_vulkan.add_sub_renderer(Box::new(sub_renderer));
 

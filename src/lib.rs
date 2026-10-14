@@ -1,5 +1,7 @@
 pub use crate::swapchain::Drawable;
-pub use allocator::{Allocator, BufferAllocation, ReadbackBuffer, SlabUpload, TransferToken};
+pub use allocator::{
+    AllocationError, Allocator, BufferAllocation, ReadbackBuffer, SlabUpload, TransferToken,
+};
 pub use ash::{self, vk};
 pub use context::Context;
 pub use core::Core;
@@ -42,17 +44,22 @@ pub struct LazyVulkan<SF: StateFamily> {
 
 impl<SF: StateFamily> LazyVulkan<SF> {
     #[cfg(feature = "window")]
-    pub fn from_window(window: &winit::window::Window) -> Self {
+    pub fn from_window(
+        window: &winit::window::Window,
+        pool_bytes: u64,
+        staging_bytes: u64,
+    ) -> Result<Self, AllocationError> {
         let core = Arc::new(Core::from_window(window));
         let context = Arc::new(Context::new_from_window(&core));
+        let allocator = Allocator::new(context.clone(), pool_bytes, staging_bytes)?;
         let swapchain = Swapchain::new(&context.device, &core, window, vk::SwapchainKHR::null());
-        let renderer = Renderer::from_wsi(context.clone(), swapchain);
+        let renderer = Renderer::from_wsi(context.clone(), swapchain, allocator);
 
-        LazyVulkan {
+        Ok(LazyVulkan {
             core,
             context,
             renderer,
-        }
+        })
     }
 
     pub fn headless(
@@ -60,14 +67,17 @@ impl<SF: StateFamily> LazyVulkan<SF> {
         context: Arc<Context>,
         extent: vk::Extent2D,
         format: vk::Format,
-    ) -> Self {
-        let renderer = Renderer::headless(context.clone(), extent, format);
+        pool_bytes: u64,
+        staging_bytes: u64,
+    ) -> Result<Self, AllocationError> {
+        let allocator = Allocator::new(context.clone(), pool_bytes, staging_bytes)?;
+        let renderer = Renderer::headless(context.clone(), extent, format, allocator);
 
-        LazyVulkan {
+        Ok(LazyVulkan {
             core,
             context,
             renderer,
-        }
+        })
     }
 
     pub fn draw<'s>(&mut self, state: &SF::For<'s>) {
@@ -88,11 +98,6 @@ impl<SF: StateFamily> LazyVulkan<SF> {
 
     pub fn begin_commands(&mut self) {
         self.renderer.begin_command_buffer();
-
-        // If any transfers were staged on the first frame, we don't want to obliterate them.
-        if self.renderer.frame != 0 {
-            self.renderer.allocator.transfers_complete();
-        }
     }
 
     pub fn wait_for_previous_frame(&self) {
@@ -131,7 +136,10 @@ impl<SF: StateFamily> LazyVulkan<SF> {
             .insert(sub_renderer.label().to_string(), sub_renderer);
     }
 
-    pub fn create_render_attachment(&mut self, attachment_info: RenderAttachmentInfo) {
+    pub fn create_render_attachment(
+        &mut self,
+        attachment_info: RenderAttachmentInfo,
+    ) -> Result<(), AllocationError> {
         assert!(
             attachment_info.samples.as_raw().is_power_of_two(),
             "expected one sample count"
@@ -160,7 +168,7 @@ impl<SF: StateFamily> LazyVulkan<SF> {
             attachment_info.extent,
             attachment_info.usage,
             attachment_info.samples,
-        );
+        )?;
 
         self.renderer.render_attachments.insert(
             attachment_info.name,
@@ -174,6 +182,7 @@ impl<SF: StateFamily> LazyVulkan<SF> {
                 samples: attachment_info.samples,
             },
         );
+        Ok(())
     }
 
     pub fn submit_and_present(&mut self, drawable: Drawable) {
@@ -184,27 +193,23 @@ impl<SF: StateFamily> LazyVulkan<SF> {
         self.renderer.resize(new_extent.into_extent());
     }
 
-    pub fn resize_render_attachment(&mut self, name: &str, new_extent: vk::Extent2D) {
-        let attachment_info = self
+    pub fn resize_render_attachment(
+        &mut self,
+        name: &str,
+        new_extent: vk::Extent2D,
+    ) -> Result<(), AllocationError> {
+        let attachment_info = *self
             .renderer
             .render_attachments
-            .remove(name)
+            .get(name)
             .expect(&format!("Render attachment {name} not found"));
 
         // If the image already has the correct extent, skip resizing
         if attachment_info.extent == new_extent {
-            self.renderer
-                .render_attachments
-                .insert(name.to_string(), attachment_info);
-            return;
+            return Ok(());
         }
 
         self.wait_for_previous_frame();
-        unsafe {
-            self.renderer
-                .image_manager
-                .destroy_attachment(attachment_info.handle, &mut self.renderer.allocator);
-        }
         let image = self.renderer.image_manager.create_attachment(
             name,
             &mut self.renderer.allocator,
@@ -212,7 +217,12 @@ impl<SF: StateFamily> LazyVulkan<SF> {
             new_extent,
             attachment_info.usage,
             attachment_info.samples,
-        );
+        )?;
+        unsafe {
+            self.renderer
+                .image_manager
+                .destroy_attachment(attachment_info.handle, &mut self.renderer.allocator);
+        }
 
         self.renderer.render_attachments.insert(
             name.to_string(),
@@ -226,6 +236,7 @@ impl<SF: StateFamily> LazyVulkan<SF> {
                 samples: attachment_info.samples,
             },
         );
+        Ok(())
     }
 }
 

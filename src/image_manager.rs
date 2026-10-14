@@ -2,7 +2,9 @@ use std::{collections::HashMap, sync::Arc};
 
 use ash::vk;
 
-use crate::{descriptors::Descriptors, Allocator, Context, TransferToken, FULL_IMAGE};
+use crate::{
+    descriptors::Descriptors, AllocationError, Allocator, Context, TransferToken, FULL_IMAGE,
+};
 
 #[derive(Debug, Clone)]
 pub struct Image {
@@ -21,7 +23,7 @@ pub struct ImageManager {
     context: Arc<Context>,
     current_id: u32,
     free_ids: Vec<u32>,
-    attachments: HashMap<vk::Image, Image>,
+    images: HashMap<vk::Image, Image>,
     texture_descriptor_set: vk::DescriptorSet,
 }
 
@@ -31,7 +33,7 @@ impl ImageManager {
             context,
             current_id: 0,
             free_ids: Vec::new(),
-            attachments: HashMap::new(),
+            images: HashMap::new(),
             texture_descriptor_set,
         }
     }
@@ -47,7 +49,7 @@ impl ImageManager {
     /// - If `format` is a depth format, we'll set the correct aspect flags on the iamge view
     ///
     /// Does not yet support multiple image layers.
-    /// Depth/stencil attachments are allocated individually and must have no upload data.
+    /// Depth/stencil attachments must have no upload data.
     pub fn create_image(
         &mut self,
         name: impl AsRef<str>,
@@ -56,7 +58,7 @@ impl ImageManager {
         extent: vk::Extent2D,
         image_bytes: impl AsRef<[u8]>,
         image_usage_flags: vk::ImageUsageFlags,
-    ) -> Image {
+    ) -> Result<Image, AllocationError> {
         self.create_image_inner(
             name,
             allocator,
@@ -77,7 +79,7 @@ impl ImageManager {
         format: vk::Format,
         extent: vk::Extent2D,
         image_bytes: impl AsRef<[u8]>,
-    ) -> Image {
+    ) -> Result<Image, AllocationError> {
         let mip_levels = mip_level_count(extent);
         self.create_image_inner(
             name,
@@ -100,7 +102,7 @@ impl ImageManager {
         format: vk::Format,
         extent: vk::Extent2D,
         levels: &[&[u8]],
-    ) -> Image {
+    ) -> Result<Image, AllocationError> {
         assert!(extent.width > 0 && extent.height > 0);
         assert!(!levels.is_empty() && levels.len() <= mip_level_count(extent) as usize);
         let mut bytes = Vec::new();
@@ -133,7 +135,7 @@ impl ImageManager {
         extent: vk::Extent2D,
         usage: vk::ImageUsageFlags,
         samples: vk::SampleCountFlags,
-    ) -> Image {
+    ) -> Result<Image, AllocationError> {
         assert!(
             samples.as_raw().is_power_of_two(),
             "expected one sample count"
@@ -143,7 +145,7 @@ impl ImageManager {
                 || !usage.contains(vk::ImageUsageFlags::SAMPLED),
             "multisampled images cannot use the ordinary texture descriptors"
         );
-        let image = self.create_image_inner(
+        self.create_image_inner(
             name,
             allocator,
             format,
@@ -153,9 +155,7 @@ impl ImageManager {
             1,
             None,
             samples,
-        );
-        self.attachments.insert(image.handle, image.clone());
-        image
+        )
     }
 
     // The submission fence must cover every use, including borrowed views.
@@ -165,7 +165,7 @@ impl ImageManager {
         allocator: &mut Allocator,
     ) {
         let image = self
-            .attachments
+            .images
             .remove(&handle)
             .expect("owned render attachment");
         let device = &self.context.device;
@@ -176,6 +176,15 @@ impl ImageManager {
         if image.id != NO_TEXTURE_ID {
             self.free_ids.push(image.id);
         }
+    }
+
+    pub fn free_image(&mut self, handle: vk::Image, allocator: &mut Allocator) {
+        let image = self.images.remove(&handle).expect("managed image");
+        allocator.free_image(image);
+    }
+
+    pub(crate) fn reclaim_texture_ids(&mut self, ids: Vec<u32>) {
+        self.free_ids.extend(ids);
     }
 
     fn create_image_inner(
@@ -189,13 +198,7 @@ impl ImageManager {
         mip_levels: u32,
         mip_offsets: Option<Vec<vk::DeviceSize>>,
         samples: vk::SampleCountFlags,
-    ) -> Image {
-        let id = if image_usage_flags.contains(vk::ImageUsageFlags::SAMPLED) {
-            self.allocate_id()
-        } else {
-            NO_TEXTURE_ID
-        };
-
+    ) -> Result<Image, AllocationError> {
         let device = &self.context.device;
         let image_bytes = image_bytes.as_ref();
         let is_depth_attachment =
@@ -206,39 +209,32 @@ impl ImageManager {
         );
 
         let handle = unsafe {
-            device
-                .create_image(
-                    &vk::ImageCreateInfo::default()
-                        .image_type(vk::ImageType::TYPE_2D)
-                        .format(format)
-                        .extent(extent.into())
-                        .mip_levels(mip_levels)
-                        .array_layers(1)
-                        .samples(samples)
-                        .tiling(vk::ImageTiling::OPTIMAL)
-                        .usage(image_usage_flags | vk::ImageUsageFlags::TRANSFER_DST)
-                        .sharing_mode(vk::SharingMode::EXCLUSIVE)
-                        .initial_layout(vk::ImageLayout::UNDEFINED),
-                    None,
-                )
-                .unwrap()
+            device.create_image(
+                &vk::ImageCreateInfo::default()
+                    .image_type(vk::ImageType::TYPE_2D)
+                    .format(format)
+                    .extent(extent.into())
+                    .mip_levels(mip_levels)
+                    .array_layers(1)
+                    .samples(samples)
+                    .tiling(vk::ImageTiling::OPTIMAL)
+                    .usage(image_usage_flags | vk::ImageUsageFlags::TRANSFER_DST)
+                    .sharing_mode(vk::SharingMode::EXCLUSIVE)
+                    .initial_layout(vk::ImageLayout::UNDEFINED),
+                None,
+            )?
         };
 
         self.context.set_debug_label(handle, name.as_ref());
 
-        let transfer_complete = if is_depth_attachment || samples != vk::SampleCountFlags::TYPE_1 {
-            allocator.allocate_dedicated_image(handle)
-        } else {
-            allocator.allocate_image_with_mip_data(
-                image_bytes,
-                extent,
-                mip_levels,
-                handle,
-                mip_offsets,
-            )
-        };
+        if let Err(error) =
+            allocator.allocate_image_with_mip_data(&[], extent, mip_levels, handle, None)
+        {
+            unsafe { device.destroy_image(handle, None) };
+            return Err(error);
+        }
 
-        let view = unsafe {
+        let view = match unsafe {
             // Another little hack.
             //
             // If the image is in a depth format, then set the depth flags
@@ -255,8 +251,16 @@ impl ImageManager {
                     .subresource_range(subresource_range),
                 None,
             )
-        }
-        .unwrap();
+        } {
+            Ok(view) => view,
+            Err(error) => {
+                unsafe {
+                    device.destroy_image(handle, None);
+                    allocator.release_image_memory(handle);
+                }
+                return Err(error.into());
+            }
+        };
 
         let mut sampler = vk::Sampler::null();
 
@@ -264,7 +268,7 @@ impl ImageManager {
             let is_shadow_map = image_usage_flags.contains(
                 vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT | vk::ImageUsageFlags::SAMPLED,
             );
-            sampler = unsafe {
+            sampler = match unsafe {
                 let mut sampler_create_info = vk::SamplerCreateInfo::default()
                     .min_filter(vk::Filter::LINEAR)
                     .mag_filter(vk::Filter::LINEAR)
@@ -298,8 +302,42 @@ impl ImageManager {
                 }
 
                 device.create_sampler(&sampler_create_info, None)
+            } {
+                Ok(sampler) => sampler,
+                Err(error) => {
+                    unsafe {
+                        device.destroy_image_view(view, None);
+                        device.destroy_image(handle, None);
+                        allocator.release_image_memory(handle);
+                    }
+                    return Err(error.into());
+                }
+            };
+        }
+        let transfer_complete = match allocator.stage_image_data(
+            image_bytes,
+            extent,
+            mip_levels,
+            handle,
+            mip_offsets,
+        ) {
+            Ok(token) => token,
+            Err(error) => {
+                unsafe {
+                    device.destroy_sampler(sampler, None);
+                    device.destroy_image_view(view, None);
+                    device.destroy_image(handle, None);
+                    allocator.release_image_memory(handle);
+                }
+                return Err(error);
             }
-            .unwrap();
+        };
+        let id = if image_usage_flags.contains(vk::ImageUsageFlags::SAMPLED) {
+            self.allocate_id()
+        } else {
+            NO_TEXTURE_ID
+        };
+        if id != NO_TEXTURE_ID {
             unsafe {
                 self.update_texture_descriptor_set(
                     sampled_descriptor_binding(image_usage_flags),
@@ -311,7 +349,7 @@ impl ImageManager {
             };
         }
 
-        Image {
+        let image = Image {
             handle,
             view,
             extent,
@@ -319,7 +357,9 @@ impl ImageManager {
             id,
             sampler,
             transfer_complete,
-        }
+        };
+        self.images.insert(handle, image.clone());
+        Ok(image)
     }
 
     pub unsafe fn update_texture_descriptor_set(

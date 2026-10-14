@@ -16,6 +16,8 @@ pub struct Context {
     pub memory_properties: vk::PhysicalDeviceMemoryProperties,
     pub device_type: vk::PhysicalDeviceType,
     pub device_properties: vk::PhysicalDeviceProperties,
+    pub max_memory_allocation_size: vk::DeviceSize,
+    pub max_buffer_size: vk::DeviceSize,
     pub(crate) timestamp_valid_bits: u32,
     debug_utils: Option<ash::ext::debug_utils::Device>,
     // TODO: Split these into RTXContext
@@ -109,7 +111,11 @@ impl Context {
         let mut acceleration_structure_properties =
             vk::PhysicalDeviceAccelerationStructurePropertiesKHR::default();
 
-        let mut properties = vk::PhysicalDeviceProperties2::default();
+        let mut maintenance3 = vk::PhysicalDeviceMaintenance3Properties::default();
+        let mut maintenance4 = vk::PhysicalDeviceMaintenance4Properties::default();
+        let mut properties = vk::PhysicalDeviceProperties2::default()
+            .push_next(&mut maintenance3)
+            .push_next(&mut maintenance4);
 
         #[cfg(feature = "rtx_on")]
         {
@@ -141,6 +147,8 @@ impl Context {
             debug_utils,
             device_type: physical_device_properties.device_type,
             device_properties: physical_device_properties,
+            max_memory_allocation_size: maintenance3.max_memory_allocation_size,
+            max_buffer_size: maintenance4.max_buffer_size,
             timestamp_valid_bits,
             #[cfg(feature = "rtx_on")]
             acceleration_structure_pfn,

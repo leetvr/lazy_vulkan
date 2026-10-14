@@ -1,5 +1,5 @@
 use super::{
-    allocator::Allocator,
+    allocator::{AllocationError, Allocator},
     context::Context,
     depth_buffer::{DepthBuffer, DEPTH_RANGE},
     swapchain::Drawable,
@@ -45,6 +45,7 @@ impl<SF: StateFamily> Renderer<SF> {
         context: Arc<Context>,
         swapchain: SwapchainBackend,
         drawable_size: vk::Extent2D,
+        allocator: Allocator,
     ) -> Self {
         let device = &context.device;
 
@@ -56,7 +57,6 @@ impl<SF: StateFamily> Renderer<SF> {
         }
         .unwrap();
 
-        let allocator = Allocator::new(context.clone());
         let descriptors = Descriptors::new(context.clone());
         let image_manager = ImageManager::new(context.clone(), descriptors.set);
         let depth_buffer = DepthBuffer::new(&context, drawable_size);
@@ -77,16 +77,22 @@ impl<SF: StateFamily> Renderer<SF> {
     }
 
     #[cfg(feature = "window")]
-    pub fn from_wsi(context: Arc<Context>, swapchain: Swapchain) -> Self {
+    pub fn from_wsi(context: Arc<Context>, swapchain: Swapchain, allocator: Allocator) -> Self {
         let extent = swapchain.extent;
-        Self::new(context, SwapchainBackend::WSI(swapchain), extent)
+        Self::new(context, SwapchainBackend::WSI(swapchain), extent, allocator)
     }
 
-    pub fn headless(context: Arc<Context>, extent: vk::Extent2D, format: vk::Format) -> Self {
+    pub fn headless(
+        context: Arc<Context>,
+        extent: vk::Extent2D,
+        format: vk::Format,
+        allocator: Allocator,
+    ) -> Self {
         Self::new(
             context.clone(),
             SwapchainBackend::Headless(HeadlessSwapchain::new(context, extent, format)),
             extent,
+            allocator,
         )
     }
 
@@ -503,6 +509,11 @@ impl<SF: StateFamily> Renderer<SF> {
     pub fn begin_command_buffer(&mut self) {
         // Block the CPU until we're done rendering the previous frame
         self.wait_for_previous_frame();
+        if self.frame != 0 {
+            self.allocator.transfers_complete();
+        }
+        let texture_ids = unsafe { self.allocator.submission_complete() };
+        self.image_manager.reclaim_texture_ids(texture_ids);
 
         let device = &self.context.device;
         unsafe {
@@ -561,6 +572,7 @@ impl<SF: StateFamily> Renderer<SF> {
         );
         // Transition the colour image to the present layout and submit all work
         self.submit_rendering(&drawable);
+        self.allocator.submission_submitted();
 
         // Present
         #[cfg(feature = "window")]
@@ -821,7 +833,7 @@ impl<SF: StateFamily> Renderer<SF> {
         extent: vk::Extent2D,
         image_bytes: impl AsRef<[u8]>,
         image_usage_flags: vk::ImageUsageFlags,
-    ) -> Image {
+    ) -> Result<Image, AllocationError> {
         self.image_manager.create_image(
             name,
             &mut self.allocator,
@@ -838,7 +850,7 @@ impl<SF: StateFamily> Renderer<SF> {
         format: vk::Format,
         extent: vk::Extent2D,
         image_bytes: impl AsRef<[u8]>,
-    ) -> Image {
+    ) -> Result<Image, AllocationError> {
         self.image_manager.create_mipmapped_sampled_image(
             name,
             &mut self.allocator,
@@ -854,7 +866,7 @@ impl<SF: StateFamily> Renderer<SF> {
         format: vk::Format,
         extent: vk::Extent2D,
         levels: &[&[u8]],
-    ) -> Image {
+    ) -> Result<Image, AllocationError> {
         self.image_manager.create_sampled_image_with_mips(
             name,
             &mut self.allocator,
@@ -869,7 +881,7 @@ impl<SF: StateFamily> Renderer<SF> {
         name: impl AsRef<str>,
         path: impl AsRef<Path>,
         format: vk::Format,
-    ) -> Image {
+    ) -> Result<Image, AllocationError> {
         let image_data = std::fs::read(path).unwrap();
         let mut decoder = png::Decoder::new(&image_data[..]);
         decoder.set_transformations(png::Transformations::ALPHA);

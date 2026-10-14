@@ -12,3 +12,7 @@ Inspiration is drawn from the "No Graphics API" concept.
 
 ## IMPORTANT
 DO NOT modify or create any documentation without human permission.
+
+## GPU usage
+- Never test with llvmpipe. Use a hardware GPU for GPU tests.
+- Any GPU usage related to the current task is permitted without asking for additional approval.
