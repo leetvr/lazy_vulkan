@@ -295,6 +295,7 @@ fn create_device(
                 )
                 .push_next(
                     &mut vk::PhysicalDeviceVulkan12Features::default()
+                        .shader_float16(true)
                         .runtime_descriptor_array(true)
                         .descriptor_indexing(true)
                         .descriptor_binding_partially_bound(true)
@@ -365,6 +366,7 @@ fn create_device(
         .shader_draw_parameters(true);
 
     let mut vulkan12_features = vk::PhysicalDeviceVulkan12Features::default()
+        .shader_float16(true)
         .runtime_descriptor_array(true)
         .descriptor_indexing(true)
         .descriptor_binding_partially_bound(true)
