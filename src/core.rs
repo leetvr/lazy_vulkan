@@ -1,4 +1,5 @@
 use ash::vk;
+#[cfg(feature = "window")]
 use winit::raw_window_handle::HasDisplayHandle;
 
 pub struct Core {
@@ -8,6 +9,7 @@ pub struct Core {
 }
 
 impl Core {
+    #[cfg(feature = "window")]
     pub(crate) fn from_window(window: &winit::window::Window) -> Self {
         // #[cfg(any(target_os = "windows", target_vendor = "apple"))]
         let entry = ash::Entry::linked();

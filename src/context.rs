@@ -36,6 +36,7 @@ pub struct RaytracingProperties {
 }
 
 impl Context {
+    #[cfg(feature = "window")]
     pub(crate) fn new_from_window(core: &Core) -> Self {
         let instance = &core.instance;
         let physical_device = core.physical_device;

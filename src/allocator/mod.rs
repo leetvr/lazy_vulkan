@@ -370,7 +370,19 @@ impl Allocator {
             token.mark_completed();
         }
 
-        self.staging_buffer.clear();
+        if let Some(start) = self
+            .pending_transfers
+            .iter()
+            .map(|t| t.staging_buffer_offset)
+            .min()
+        {
+            self.staging_buffer.retain_from(start);
+            for transfer in &mut self.pending_transfers {
+                transfer.staging_buffer_offset -= start;
+            }
+        } else {
+            self.staging_buffer.clear();
+        }
     }
 
     pub fn upload_to_slab<T: bytemuck::Pod + Debug>(&mut self, data: &[T]) -> SlabUpload<T> {
@@ -544,6 +556,15 @@ pub struct ReadbackBuffer {
 }
 
 impl ReadbackBuffer {
+    pub unsafe fn read_vec<T: bytemuck::Pod>(&self) -> Vec<T> {
+        assert!(std::mem::size_of::<T>() > 0 && self.size % std::mem::size_of::<T>() == 0);
+        let bytes = std::slice::from_raw_parts(self.ptr.as_ptr(), self.size);
+        bytes
+            .chunks_exact(std::mem::size_of::<T>())
+            .map(bytemuck::pod_read_unaligned)
+            .collect()
+    }
+
     pub fn size(&self) -> usize {
         self.size
     }

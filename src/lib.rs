@@ -12,6 +12,7 @@ pub use render_plan::{RenderAttachment, RenderPass, RenderPlan, RenderStage};
 pub use renderer::Renderer;
 use std::sync::Arc;
 pub use sub_renderer::{AttachmentInfo, LayerInfo, StateFamily, SubRenderer};
+#[cfg(feature = "window")]
 use swapchain::Swapchain;
 pub use timestamp_queries::TimestampQueryResults;
 
@@ -38,6 +39,7 @@ pub struct LazyVulkan<SF: StateFamily> {
 }
 
 impl<SF: StateFamily> LazyVulkan<SF> {
+    #[cfg(feature = "window")]
     pub fn from_window(window: &winit::window::Window) -> Self {
         let core = Arc::new(Core::from_window(window));
         let context = Arc::new(Context::new_from_window(&core));
@@ -215,6 +217,7 @@ impl IntoExtent for vk::Extent2D {
     }
 }
 
+#[cfg(feature = "window")]
 impl IntoExtent for winit::dpi::PhysicalSize<u32> {
     fn into_extent(self) -> vk::Extent2D {
         vk::Extent2D {

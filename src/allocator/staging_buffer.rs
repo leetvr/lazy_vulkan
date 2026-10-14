@@ -107,6 +107,14 @@ impl StagingBuffer {
         staging_buffer_offset as usize
     }
 
+    pub fn retain_from(&mut self, start: usize) {
+        let retained = self.size as usize - start;
+        unsafe {
+            std::ptr::copy(self.ptr.as_ptr().add(start), self.ptr.as_ptr(), retained);
+        }
+        self.size = retained as vk::DeviceSize;
+    }
+
     pub fn clear(&mut self) {
         self.size = 0;
     }

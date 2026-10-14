@@ -1,6 +1,8 @@
 use ash::vk;
+#[cfg(feature = "window")]
 use winit::raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 
+#[cfg(feature = "window")]
 pub struct Swapchain {
     pub surface_handle: vk::SurfaceKHR,
     #[allow(unused)]
@@ -17,6 +19,7 @@ pub struct Swapchain {
     rendering_complete_semaphores: Vec<vk::Semaphore>,
 }
 
+#[cfg(feature = "window")]
 impl Swapchain {
     pub(crate) fn new(
         device: &ash::Device,
@@ -175,6 +178,7 @@ impl Swapchain {
     }
 }
 
+#[cfg(feature = "window")]
 fn build_swapchain(
     device: &ash::Device,
     old_swapchain: vk::SwapchainKHR,
@@ -248,11 +252,13 @@ pub struct Drawable {
     pub extent: vk::Extent2D,
 }
 
+#[cfg(feature = "window")]
 struct SemaphoreRingBuffer {
     index: usize,
     semaphores: [vk::Semaphore; 3],
 }
 
+#[cfg(feature = "window")]
 impl SemaphoreRingBuffer {
     pub fn new(device: &ash::Device) -> SemaphoreRingBuffer {
         // good

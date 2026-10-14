@@ -2,9 +2,11 @@ use super::{
     allocator::Allocator,
     context::Context,
     depth_buffer::{DepthBuffer, DEPTH_RANGE},
-    swapchain::{Drawable, Swapchain},
+    swapchain::Drawable,
     FULL_IMAGE,
 };
+#[cfg(feature = "window")]
+use crate::swapchain::Swapchain;
 use crate::{
     descriptors::Descriptors,
     headless_swapchain::HeadlessSwapchain,
@@ -18,6 +20,7 @@ use ash::vk::{self};
 use std::{collections::HashMap, path::Path, sync::Arc, u64};
 
 enum SwapchainBackend {
+    #[cfg(feature = "window")]
     WSI(Swapchain),
     Headless(HeadlessSwapchain),
 }
@@ -73,6 +76,7 @@ impl<SF: StateFamily> Renderer<SF> {
         }
     }
 
+    #[cfg(feature = "window")]
     pub fn from_wsi(context: Arc<Context>, swapchain: Swapchain) -> Self {
         let extent = swapchain.extent;
         Self::new(context, SwapchainBackend::WSI(swapchain), extent)
@@ -557,6 +561,7 @@ impl<SF: StateFamily> Renderer<SF> {
         self.submit_rendering(&drawable);
 
         // Present
+        #[cfg(feature = "window")]
         if let SwapchainBackend::WSI(swapchain) = &mut self.swapchain {
             swapchain.present(drawable, self.context.graphics_queue);
         }
@@ -673,6 +678,7 @@ impl<SF: StateFamily> Renderer<SF> {
 
     pub fn resize(&mut self, extent: vk::Extent2D) {
         match &mut self.swapchain {
+            #[cfg(feature = "window")]
             SwapchainBackend::WSI(swapchain) => {
                 swapchain.extent = extent;
                 swapchain.needs_update = true;
@@ -684,9 +690,11 @@ impl<SF: StateFamily> Renderer<SF> {
     }
 
     pub(crate) fn get_drawable(&mut self) -> Drawable {
+        #[cfg(feature = "window")]
         let device = &self.context.device;
 
         match &mut self.swapchain {
+            #[cfg(feature = "window")]
             SwapchainBackend::WSI(swapchain) => {
                 if swapchain.needs_update {
                     unsafe { device.device_wait_idle().unwrap() };
@@ -714,22 +722,24 @@ impl<SF: StateFamily> Renderer<SF> {
         let queue = context.graphics_queue;
         let command_buffer = context.draw_command_buffer;
         unsafe {
-            // First, transition the color attachment into the present state
-            context.cmd_pipeline_barrier2(
-                command_buffer,
-                &vk::DependencyInfo::default().image_memory_barriers(&[
-                    vk::ImageMemoryBarrier2::default()
-                        .subresource_range(FULL_IMAGE)
-                        .image(drawable.image)
-                        .src_access_mask(vk::AccessFlags2::COLOR_ATTACHMENT_WRITE)
-                        .src_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
-                        .dst_access_mask(vk::AccessFlags2::NONE)
-                        .dst_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
-                        .old_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
-                        .new_layout(vk::ImageLayout::PRESENT_SRC_KHR),
-                ]),
-            );
-
+            // Only WSI images have presentation ownership and layouts.
+            if drawable.image_available.is_some() {
+                // First, transition the color attachment into the present state
+                context.cmd_pipeline_barrier2(
+                    command_buffer,
+                    &vk::DependencyInfo::default().image_memory_barriers(&[
+                        vk::ImageMemoryBarrier2::default()
+                            .subresource_range(FULL_IMAGE)
+                            .image(drawable.image)
+                            .src_access_mask(vk::AccessFlags2::COLOR_ATTACHMENT_WRITE)
+                            .src_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
+                            .dst_access_mask(vk::AccessFlags2::NONE)
+                            .dst_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
+                            .old_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+                            .new_layout(vk::ImageLayout::PRESENT_SRC_KHR),
+                    ]),
+                );
+            }
             self.context.end_marker();
 
             // End the command buffer
@@ -755,13 +765,9 @@ impl<SF: StateFamily> Renderer<SF> {
             } else {
                 context.queue_submit2(
                     queue,
-                    &[vk::SubmitInfo2::default()
-                        .command_buffer_infos(&[
-                            vk::CommandBufferSubmitInfo::default().command_buffer(command_buffer)
-                        ])
-                        .signal_semaphore_infos(&[vk::SemaphoreSubmitInfo::default()
-                            .semaphore(drawable.rendering_complete)
-                            .stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)])],
+                    &[vk::SubmitInfo2::default().command_buffer_infos(&[
+                        vk::CommandBufferSubmitInfo::default().command_buffer(command_buffer),
+                    ])],
                     self.fence,
                 );
             }
@@ -890,6 +896,7 @@ impl<SF: StateFamily> Renderer<SF> {
 
     pub fn get_drawable_format(&self) -> vk::Format {
         match &self.swapchain {
+            #[cfg(feature = "window")]
             SwapchainBackend::WSI(swapchain) => swapchain.format,
             SwapchainBackend::Headless(headless_swapchain) => headless_swapchain.format,
         }
@@ -897,6 +904,7 @@ impl<SF: StateFamily> Renderer<SF> {
 
     pub fn get_drawable_extent(&self) -> vk::Extent2D {
         match &self.swapchain {
+            #[cfg(feature = "window")]
             SwapchainBackend::WSI(swapchain) => swapchain.extent,
             SwapchainBackend::Headless(headless_swapchain) => headless_swapchain.extent,
         }
@@ -907,6 +915,7 @@ impl<SF: StateFamily> Renderer<SF> {
             SwapchainBackend::Headless(headless_swapchain) => {
                 Some(headless_swapchain.image.clone())
             }
+            #[cfg(feature = "window")]
             _ => None,
         }
     }

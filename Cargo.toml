@@ -8,12 +8,13 @@ version = "0.1.0"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [features]
-default = []
+default = ["window"]
+window = ["dep:winit", "dep:ash-window"]
 rtx_on = []
 
 [dependencies]
 ash = { features = ["linked"], version = "0.38.0" }
-ash-window = "0.13.0"
+ash-window = { version = "0.13.0", optional = true }
 bytemuck = "1.13.0"
 glam = "0.30.5"
 log = "0.4.17"
@@ -21,7 +22,7 @@ offset-allocator = "0.2.0"
 png = "0.17.16"
 thunderdome = "0.6.0"
 uds_windows = "1.0.2"
-winit = { version = "0.30.11", default-features = false, features = [
+winit = { version = "0.30.11", optional = true, default-features = false, features = [
     "rwh_06",
     "wayland",
 ] }

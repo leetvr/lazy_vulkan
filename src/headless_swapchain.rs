@@ -7,25 +7,16 @@ pub struct HeadlessSwapchain {
     pub extent: vk::Extent2D,
     pub format: vk::Format,
     pub image: HeadlessSwapchainImage,
-    render_complete: vk::Semaphore,
 }
 
 impl HeadlessSwapchain {
     pub(crate) fn new(context: Arc<Context>, extent: vk::Extent2D, format: vk::Format) -> Self {
         let image = HeadlessSwapchainImage::new(&context, extent, format);
-        let render_complete = unsafe {
-            context
-                .device
-                .create_semaphore(&vk::SemaphoreCreateInfo::default(), None)
-        }
-        .unwrap();
-
         Self {
             context,
             extent,
             format,
             image,
-            render_complete,
         }
     }
 
@@ -43,7 +34,7 @@ impl HeadlessSwapchain {
             image: self.image.image,
             view: self.image.view,
             image_available: None,
-            rendering_complete: self.render_complete,
+            rendering_complete: vk::Semaphore::null(),
             index: 0,
             extent: self.extent,
         }
