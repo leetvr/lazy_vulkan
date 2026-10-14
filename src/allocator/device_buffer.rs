@@ -360,7 +360,10 @@ impl DiscreteDeviceBuffer {
 
         let (destination_offset, destination_buffer) = match destination {
             TransferDestination::Buffer(buffer) => (allocation_offset, buffer),
-            TransferDestination::Slab => (global_offset.total_offset() as usize, self.slab_buffer),
+            TransferDestination::Slab => (
+                global_offset.expect("pooled slab").total_offset() as usize,
+                self.slab_buffer,
+            ),
             _ => return,
         };
 
@@ -529,7 +532,10 @@ impl IntegratedDeviceBuffer {
         // and then finally adding the offset within the allocation itself
         let destination = unsafe {
             self.global_ptr
-                .add(global_offset.total_offset() as usize + allocation_offset)
+                .add(
+                    global_offset.expect("pooled buffer").total_offset() as usize
+                        + allocation_offset,
+                )
                 .as_ptr()
         };
 

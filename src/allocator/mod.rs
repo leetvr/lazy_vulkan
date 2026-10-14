@@ -269,22 +269,21 @@ impl Allocator {
         let align = memory_requirements.alignment;
 
         // Allocate an offset into our device local memory
-        let global_offset = self.allocate_offset(size, align);
-        let device = &self.context.device;
-
-        // Bind the image to the memory at this offset
-        unsafe {
-            device.bind_image_memory(
-                image,
-                self.backend.device_memory(),
-                global_offset.total_offset(),
-            )
+        let global_offset = self.try_allocate_offset(size, align);
+        if let Some(offset) = global_offset {
+            unsafe {
+                self.context.device.bind_image_memory(
+                    image,
+                    self.backend.device_memory(),
+                    offset.total_offset(),
+                )
+            }
+            .unwrap();
+            self.image_allocations
+                .insert(image, ImageAllocation::Pooled(offset));
+        } else {
+            self.allocate_dedicated_image(image);
         }
-        .unwrap();
-
-        // Stage the transfer
-        self.image_allocations
-            .insert(image, ImageAllocation::Pooled(global_offset));
         let (ours, theirs) = TransferToken::create_pair();
 
         if !data.is_empty() {
@@ -343,7 +342,7 @@ impl Allocator {
             destination: TransferDestination::Buffer(allocation.handle),
             staging_buffer_offset,
             transfer_size: bytes.len() as _,
-            global_offset: allocation.global_offset,
+            global_offset: Some(allocation.global_offset),
             transfer_token: ours,
             allocation_offset: allocation.current_size() as usize,
         });
@@ -369,6 +368,10 @@ impl Allocator {
         );
 
         self.context.end_marker();
+    }
+
+    pub fn can_stage(&self, bytes: usize) -> bool {
+        self.staging_buffer.can_stage(bytes)
     }
 
     /// This should only be called when all transfers issued with `execute_transfers` have been
@@ -410,7 +413,7 @@ impl Allocator {
             destination: TransferDestination::Slab,
             staging_buffer_offset,
             transfer_size: bytes.len() as _,
-            global_offset,
+            global_offset: Some(global_offset),
             transfer_token: ours,
             allocation_offset: 0,
         });
@@ -445,10 +448,12 @@ impl Allocator {
     }
 
     fn allocate_offset(&mut self, size: u64, align: u64) -> Offset {
-        let allocation = self
-            .offset_allocator
-            .allocate(size as u32)
-            .expect("COULD NOT ALLOCATE AN OFFSET - THIS SHOULD BE IMPOSSIBLE");
+        self.try_allocate_offset(size, align)
+            .expect("global buffer pool exhausted")
+    }
+
+    fn try_allocate_offset(&mut self, size: u64, align: u64) -> Option<Offset> {
+        let allocation = self.offset_allocator.allocate(u32::try_from(size).ok()?)?;
         let aligned = align_offset(align, allocation);
 
         // Happy case: the offset is already aligned!
@@ -457,10 +462,10 @@ impl Allocator {
                 "[ALIGNED]: offset:{}, align:{align}, size: {size}",
                 allocation.offset
             );
-            return Offset {
+            return Some(Offset {
                 allocation,
                 bind_offset: 0,
-            };
+            });
         }
 
         // Not aligned. First, see how much padding we need:
@@ -475,21 +480,18 @@ impl Allocator {
         self.offset_allocator.free(allocation);
 
         // Ask for a new allocation with the padding we need
-        let new_size = (padding + size) as u32;
-        let allocation = self
-            .offset_allocator
-            .allocate(new_size)
-            .expect("COULD NOT ALLOCATE AN OFFSET - THIS SHOULD BE IMPOSSIBLE");
+        let new_size = u32::try_from(padding + size).ok()?;
+        let allocation = self.offset_allocator.allocate(new_size)?;
 
         log::trace!(
             "[FIXED]: offset:{}, align:{align}, pad: {padding}, size: {new_size}",
             allocation.offset
         );
 
-        Offset {
+        Some(Offset {
             allocation,
             bind_offset: padding,
-        }
+        })
     }
 }
 
@@ -547,9 +549,9 @@ impl TransferToken {
 
 pub struct PendingTransfer {
     destination: TransferDestination,
-    staging_buffer_offset: usize, // offset within the staging buffer
-    global_offset: Offset,        // offset into the global memory
-    allocation_offset: usize,     // offset within the allocation
+    staging_buffer_offset: usize,  // offset within the staging buffer
+    global_offset: Option<Offset>, // images may use dedicated memory
+    allocation_offset: usize,      // offset within the allocation
     transfer_size: vk::DeviceSize,
     transfer_token: TransferToken,
 }

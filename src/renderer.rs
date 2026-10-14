@@ -521,6 +521,49 @@ impl<SF: StateFamily> Renderer<SF> {
         }
     }
 
+    /// Completes queued uploads without acquiring or presenting a drawable.
+    pub fn flush_uploads(&mut self) {
+        self.begin_command_buffer();
+        self.allocator.transfers_complete();
+        let context = &self.context;
+        let command_buffer = context.draw_command_buffer;
+        self.allocator.execute_transfers(command_buffer);
+        // Make upload writes visible to subsequent commands on the same queue.
+        // https://docs.vulkan.org/spec/latest/chapters/synchronization.html
+        unsafe {
+            context.cmd_pipeline_barrier2(
+                command_buffer,
+                &vk::DependencyInfo::default().memory_barriers(&[vk::MemoryBarrier2::default()
+                    .src_stage_mask(vk::PipelineStageFlags2::TRANSFER)
+                    .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
+                    .dst_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
+                    .dst_access_mask(
+                        vk::AccessFlags2::MEMORY_READ | vk::AccessFlags2::MEMORY_WRITE,
+                    )]),
+            );
+            context.device.end_command_buffer(command_buffer).unwrap();
+            context.queue_submit2(
+                context.graphics_queue,
+                &[vk::SubmitInfo2::default().command_buffer_infos(&[
+                    vk::CommandBufferSubmitInfo::default().command_buffer(command_buffer),
+                ])],
+                self.fence,
+            );
+        }
+        self.wait_for_previous_frame();
+        self.allocator.transfers_complete();
+    }
+
+    fn reserve_upload(&mut self, bytes: usize) {
+        if !self.allocator.can_stage(bytes) {
+            self.flush_uploads();
+        }
+        assert!(
+            self.allocator.can_stage(bytes),
+            "one upload exceeds staging capacity"
+        );
+    }
+
     pub fn prepare_timestamp_queries(&mut self, query_count: u32) -> Option<TimestampQueryResults> {
         if self.context.timestamp_valid_bits == 0 {
             return None;
@@ -822,6 +865,7 @@ impl<SF: StateFamily> Renderer<SF> {
         image_bytes: impl AsRef<[u8]>,
         image_usage_flags: vk::ImageUsageFlags,
     ) -> Image {
+        self.reserve_upload(image_bytes.as_ref().len());
         self.image_manager.create_image(
             name,
             &mut self.allocator,
@@ -839,6 +883,7 @@ impl<SF: StateFamily> Renderer<SF> {
         extent: vk::Extent2D,
         image_bytes: impl AsRef<[u8]>,
     ) -> Image {
+        self.reserve_upload(image_bytes.as_ref().len());
         self.image_manager.create_mipmapped_sampled_image(
             name,
             &mut self.allocator,
@@ -855,6 +900,7 @@ impl<SF: StateFamily> Renderer<SF> {
         extent: vk::Extent2D,
         levels: &[&[u8]],
     ) -> Image {
+        self.reserve_upload(levels.iter().map(|level| level.len()).sum());
         self.image_manager.create_sampled_image_with_mips(
             name,
             &mut self.allocator,
