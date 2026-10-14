@@ -94,7 +94,7 @@ impl<'a> ApplicationHandler for App {
             )
             .unwrap();
 
-        let mut lazy_vulkan = LazyVulkan::from_window(&window);
+        let mut lazy_vulkan = LazyVulkan::from_window(&window, 2 << 30, 500 << 20).unwrap();
         let sub_renderer = TriangleRenderer::new(&lazy_vulkan.renderer);
         lazy_vulkan.add_sub_renderer(Box::new(sub_renderer));
 
