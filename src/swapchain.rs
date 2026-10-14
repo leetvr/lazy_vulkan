@@ -5,7 +5,6 @@ use winit::raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 #[cfg(feature = "window")]
 pub struct Swapchain {
     pub surface_handle: vk::SurfaceKHR,
-    #[allow(unused)]
     pub surface_fn: ash::khr::surface::Instance,
     pub swapchain_handle: vk::SwapchainKHR,
     pub swapchain_fn: ash::khr::swapchain::Device,
@@ -16,6 +15,7 @@ pub struct Swapchain {
     pub needs_update: bool,
     image_available_semaphores: SemaphoreRingBuffer,
     capabilities: vk::SurfaceCapabilitiesKHR,
+    physical_device: vk::PhysicalDevice,
     rendering_complete_semaphores: Vec<vk::Semaphore>,
 }
 
@@ -61,6 +61,7 @@ impl Swapchain {
         .unwrap();
 
         let swapchain_fn = ash::khr::swapchain::Device::new(instance, device);
+        let extent = surface_extent(extent, capabilities);
 
         let (swapchain_handle, images, image_views) = build_swapchain(
             device,
@@ -92,6 +93,7 @@ impl Swapchain {
             needs_update: false,
             image_available_semaphores,
             capabilities,
+            physical_device: core.physical_device,
             rendering_complete_semaphores,
         }
     }
@@ -131,6 +133,12 @@ impl Swapchain {
 
     pub fn resize(&mut self, device: &ash::Device) {
         println!("Resizing swapchain!");
+        self.capabilities = unsafe {
+            self.surface_fn
+                .get_physical_device_surface_capabilities(self.physical_device, self.surface_handle)
+        }
+        .unwrap();
+        self.extent = surface_extent(self.extent, self.capabilities);
         // Create a new swapchain
         let (swapchain_handle, images, image_views) = build_swapchain(
             device,
@@ -156,6 +164,14 @@ impl Swapchain {
         self.swapchain_handle = swapchain_handle;
         self.images = images;
         self.image_views = image_views;
+        while self.rendering_complete_semaphores.len() < self.images.len() {
+            let semaphore = unsafe {
+                device
+                    .create_semaphore(&vk::SemaphoreCreateInfo::default(), None)
+                    .unwrap()
+            };
+            self.rendering_complete_semaphores.push(semaphore);
+        }
         self.needs_update = false;
     }
 
@@ -193,7 +209,11 @@ fn build_swapchain(
         swapchain_fn.create_swapchain(
             &vk::SwapchainCreateInfoKHR::default()
                 .surface(surface_handle)
-                .min_image_count(capabilities.min_image_count + 1)
+                .min_image_count(if capabilities.max_image_count == 0 {
+                    capabilities.min_image_count + 1
+                } else {
+                    (capabilities.min_image_count + 1).min(capabilities.max_image_count)
+                })
                 .image_format(format)
                 .image_extent(extent)
                 .image_color_space(vk::ColorSpaceKHR::SRGB_NONLINEAR)
@@ -240,6 +260,26 @@ fn build_swapchain(
         })
         .unzip();
     (swapchain_handle, images, image_views)
+}
+
+#[cfg(feature = "window")]
+fn surface_extent(
+    requested: vk::Extent2D,
+    capabilities: vk::SurfaceCapabilitiesKHR,
+) -> vk::Extent2D {
+    if capabilities.current_extent.width != u32::MAX {
+        return capabilities.current_extent;
+    }
+    vk::Extent2D {
+        width: requested.width.clamp(
+            capabilities.min_image_extent.width,
+            capabilities.max_image_extent.width,
+        ),
+        height: requested.height.clamp(
+            capabilities.min_image_extent.height,
+            capabilities.max_image_extent.height,
+        ),
+    }
 }
 
 #[derive(Debug, Copy, Clone)]
