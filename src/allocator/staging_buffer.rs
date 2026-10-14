@@ -107,10 +107,6 @@ impl StagingBuffer {
         staging_buffer_offset as usize
     }
 
-    pub fn can_stage(&self, bytes: usize) -> bool {
-        ((self.size + 15) & !15) + bytes as u64 <= STAGING_MEMORY_SIZE
-    }
-
     pub fn retain_from(&mut self, start: usize) {
         let retained = self.size as usize - start;
         unsafe {
