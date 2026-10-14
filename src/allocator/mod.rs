@@ -3,6 +3,7 @@ mod staging_buffer;
 use device_buffer::DeviceBuffer;
 use staging_buffer::StagingBuffer;
 use std::{
+    collections::HashMap,
     fmt::Debug,
     marker::PhantomData,
     sync::{
@@ -27,8 +28,12 @@ pub struct Allocator {
     backend: DeviceBuffer,
     staging_buffer: StagingBuffer,
     pending_tokens: Vec<TransferToken>,
-    // Retained like pooled image allocations; image release is not implemented yet.
-    dedicated_image_memory: Vec<vk::DeviceMemory>,
+    image_allocations: HashMap<vk::Image, ImageAllocation>,
+}
+
+enum ImageAllocation {
+    Pooled(Offset),
+    Dedicated(vk::DeviceMemory),
 }
 
 impl Allocator {
@@ -45,7 +50,7 @@ impl Allocator {
             pending_transfers: Default::default(),
             staging_buffer,
             pending_tokens: Default::default(),
-            dedicated_image_memory: Default::default(),
+            image_allocations: Default::default(),
         }
     }
 
@@ -223,7 +228,8 @@ impl Allocator {
         .expect("Failed to allocate attachment image memory");
         unsafe { device.bind_image_memory(image, memory, 0) }
             .expect("Failed to bind attachment image memory");
-        self.dedicated_image_memory.push(memory);
+        self.image_allocations
+            .insert(image, ImageAllocation::Dedicated(memory));
 
         let token = TransferToken::default();
         token.mark_completed();
@@ -277,6 +283,8 @@ impl Allocator {
         .unwrap();
 
         // Stage the transfer
+        self.image_allocations
+            .insert(image, ImageAllocation::Pooled(global_offset));
         let (ours, theirs) = TransferToken::create_pair();
 
         if !data.is_empty() {
@@ -413,6 +421,18 @@ impl Allocator {
             offset: global_offset,
             transfer_token: theirs,
             _phantom: Default::default(),
+        }
+    }
+
+    // Caller has destroyed the image after all uses completed.
+    pub(crate) unsafe fn release_image_memory(&mut self, image: vk::Image) {
+        match self
+            .image_allocations
+            .remove(&image)
+            .expect("owned image allocation")
+        {
+            ImageAllocation::Pooled(offset) => self.offset_allocator.free(offset.allocation),
+            ImageAllocation::Dedicated(memory) => self.context.device.free_memory(memory, None),
         }
     }
 
@@ -1048,11 +1068,12 @@ mod tests {
             assert!(image.transfer_complete.is_complete());
         }
 
-        assert_eq!(renderer.allocator.dedicated_image_memory.len(), 2);
-        assert_ne!(
-            renderer.allocator.dedicated_image_memory[0],
-            renderer.allocator.dedicated_image_memory[1]
-        );
+        assert_eq!(renderer.allocator.image_allocations.len(), 2);
+        assert!(renderer
+            .allocator
+            .image_allocations
+            .values()
+            .all(|allocation| matches!(allocation, super::ImageAllocation::Dedicated(_))));
         assert!(renderer.allocator.pending_transfers.is_empty());
         assert_eq!(
             renderer
@@ -1070,7 +1091,7 @@ mod tests {
             [],
             vk::ImageUsageFlags::COLOR_ATTACHMENT,
         );
-        assert_eq!(renderer.allocator.dedicated_image_memory.len(), 2);
+        assert_eq!(renderer.allocator.image_allocations.len(), 3);
         assert!(
             renderer
                 .allocator

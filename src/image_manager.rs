@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 use ash::vk;
 
@@ -20,6 +20,8 @@ const NO_TEXTURE_ID: u32 = std::u32::MAX;
 pub struct ImageManager {
     context: Arc<Context>,
     current_id: u32,
+    free_ids: Vec<u32>,
+    attachments: HashMap<vk::Image, Image>,
     texture_descriptor_set: vk::DescriptorSet,
 }
 
@@ -28,6 +30,8 @@ impl ImageManager {
         ImageManager {
             context,
             current_id: 0,
+            free_ids: Vec::new(),
+            attachments: HashMap::new(),
             texture_descriptor_set,
         }
     }
@@ -139,7 +143,7 @@ impl ImageManager {
                 || !usage.contains(vk::ImageUsageFlags::SAMPLED),
             "multisampled images cannot use the ordinary texture descriptors"
         );
-        self.create_image_inner(
+        let image = self.create_image_inner(
             name,
             allocator,
             format,
@@ -149,7 +153,29 @@ impl ImageManager {
             1,
             None,
             samples,
-        )
+        );
+        self.attachments.insert(image.handle, image.clone());
+        image
+    }
+
+    // The submission fence must cover every use, including borrowed views.
+    pub(crate) unsafe fn destroy_attachment(
+        &mut self,
+        handle: vk::Image,
+        allocator: &mut Allocator,
+    ) {
+        let image = self
+            .attachments
+            .remove(&handle)
+            .expect("owned render attachment");
+        let device = &self.context.device;
+        device.destroy_image_view(image.view, None);
+        device.destroy_sampler(image.sampler, None);
+        device.destroy_image(image.handle, None);
+        allocator.release_image_memory(image.handle);
+        if image.id != NO_TEXTURE_ID {
+            self.free_ids.push(image.id);
+        }
     }
 
     fn create_image_inner(
@@ -323,6 +349,9 @@ impl ImageManager {
     }
 
     fn allocate_id(&mut self) -> u32 {
+        if let Some(id) = self.free_ids.pop() {
+            return id;
+        }
         let id = self.current_id;
         self.current_id += 1;
         id

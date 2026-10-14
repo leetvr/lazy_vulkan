@@ -199,6 +199,12 @@ impl<SF: StateFamily> LazyVulkan<SF> {
             return;
         }
 
+        self.wait_for_previous_frame();
+        unsafe {
+            self.renderer
+                .image_manager
+                .destroy_attachment(attachment_info.handle, &mut self.renderer.allocator);
+        }
         let image = self.renderer.image_manager.create_attachment(
             name,
             &mut self.renderer.allocator,
@@ -220,9 +226,6 @@ impl<SF: StateFamily> LazyVulkan<SF> {
                 samples: attachment_info.samples,
             },
         );
-
-        // TODO
-        // self.renderer.destroy_image(attachment_info.handle);
     }
 }
 
