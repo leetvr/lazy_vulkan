@@ -189,6 +189,10 @@ impl<SF: StateFamily> LazyVulkan<SF> {
         self.renderer.submit_and_present(drawable);
     }
 
+    pub fn submit_commands(&mut self) {
+        self.renderer.submit_commands();
+    }
+
     pub fn resize(&mut self, new_extent: impl IntoExtent) {
         self.renderer.resize(new_extent.into_extent());
     }
