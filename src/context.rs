@@ -340,6 +340,9 @@ fn create_device(
                 .texture_compression_bc
                 == vk::TRUE,
         )
+        // Fragment PrimitiveId requires the Geometry SPIR-V capability.
+        // https://docs.vulkan.org/refpages/latest/refpages/source/PrimitiveId.html
+        .geometry_shader(true)
         .fill_mode_non_solid(true)
         .sampler_anisotropy(true)
         .shader_int16(true)
