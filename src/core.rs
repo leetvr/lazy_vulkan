@@ -52,7 +52,8 @@ impl Core {
                         .flags(instance_create_flags)
                         .enabled_extension_names(&instance_extensions)
                         .application_info(
-                            &vk::ApplicationInfo::default().api_version(vk::API_VERSION_1_3),
+                            &vk::ApplicationInfo::default()
+                                .api_version(vk::make_api_version(0, 1, 4, 0)),
                         ),
                     None,
                 )
@@ -99,7 +100,8 @@ impl Core {
                         .flags(instance_create_flags)
                         .enabled_extension_names(&instance_extensions)
                         .application_info(
-                            &vk::ApplicationInfo::default().api_version(vk::API_VERSION_1_3),
+                            &vk::ApplicationInfo::default()
+                                .api_version(vk::make_api_version(0, 1, 4, 0)),
                         ),
                     None,
                 )
