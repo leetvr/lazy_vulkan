@@ -334,6 +334,7 @@ fn create_device(
     {
         enabled_extension_names.push(ash::khr::acceleration_structure::NAME.as_ptr());
         enabled_extension_names.push(ash::khr::ray_tracing_pipeline::NAME.as_ptr());
+        enabled_extension_names.push(ash::khr::ray_query::NAME.as_ptr());
         enabled_extension_names.push(ash::khr::deferred_host_operations::NAME.as_ptr());
         enabled_extension_names.push(ash::khr::shader_clock::NAME.as_ptr());
     }
@@ -390,6 +391,11 @@ fn create_device(
     let mut ray_tracing_pipeline_features =
         vk::PhysicalDeviceRayTracingPipelineFeaturesKHR::default().ray_tracing_pipeline(true);
 
+    // Inline ray queries from compute and fragment shaders.
+    // https://docs.vulkan.org/refpages/latest/refpages/source/VkPhysicalDeviceRayQueryFeaturesKHR.html
+    #[cfg(feature = "rtx_on")]
+    let mut ray_query_features = vk::PhysicalDeviceRayQueryFeaturesKHR::default().ray_query(true);
+
     #[cfg(feature = "rtx_on")]
     let mut shader_clock_features =
         vk::PhysicalDeviceShaderClockFeaturesKHR::default().shader_subgroup_clock(true);
@@ -406,6 +412,7 @@ fn create_device(
         device_create_info = device_create_info
             .push_next(&mut acceleration_structure_features)
             .push_next(&mut ray_tracing_pipeline_features)
+            .push_next(&mut ray_query_features)
             .push_next(&mut shader_clock_features);
     }
 

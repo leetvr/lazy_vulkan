@@ -471,6 +471,68 @@ impl Allocator {
         self.pending_frees.push(PendingFree::Readback(readback));
     }
 
+    /// Allocates an acceleration structure of `size` bytes over the pool. Record its build
+    /// with `Context::acceleration_structure_pfn` before anything traverses it.
+    #[cfg(feature = "rtx_on")]
+    pub fn allocate_acceleration_structure(
+        &mut self,
+        ty: vk::AccelerationStructureTypeKHR,
+        size: vk::DeviceSize,
+    ) -> Result<AccelerationStructureAllocation, AllocationError> {
+        // The backing buffer offset must be a multiple of 256.
+        // https://docs.vulkan.org/refpages/latest/refpages/source/VkAccelerationStructureCreateInfoKHR.html
+        let buffer = self.allocate_buffer_with_alignment::<u8>(
+            size as usize,
+            256,
+            vk::BufferUsageFlags::ACCELERATION_STRUCTURE_STORAGE_KHR,
+        )?;
+        let handle = match unsafe {
+            self.context
+                .acceleration_structure_pfn
+                .create_acceleration_structure(
+                    &vk::AccelerationStructureCreateInfoKHR::default()
+                        .buffer(buffer.handle)
+                        .size(size)
+                        .ty(ty),
+                    None,
+                )
+        } {
+            Ok(handle) => handle,
+            Err(error) => {
+                self.free(buffer);
+                return Err(error.into());
+            }
+        };
+        self.context.set_debug_label(
+            handle,
+            &format!("[lazy_vulkan] AccelerationStructure {ty:?}"),
+        );
+        let device_address = unsafe {
+            self.context
+                .acceleration_structure_pfn
+                .get_acceleration_structure_device_address(
+                    &vk::AccelerationStructureDeviceAddressInfoKHR::default()
+                        .acceleration_structure(handle),
+                )
+        };
+        Ok(AccelerationStructureAllocation {
+            handle,
+            device_address,
+            size,
+            buffer: buffer.handle,
+            global_offset: buffer.global_offset,
+        })
+    }
+
+    #[cfg(feature = "rtx_on")]
+    pub fn free_acceleration_structure(&mut self, allocation: AccelerationStructureAllocation) {
+        self.pending_frees.push(PendingFree::AccelerationStructure {
+            handle: allocation.handle,
+            buffer: allocation.buffer,
+            offset: allocation.global_offset,
+        });
+    }
+
     pub(crate) fn free_image(&mut self, image: crate::Image) {
         let offset = self
             .image_allocations
@@ -509,6 +571,18 @@ impl Allocator {
                     if image.id != u32::MAX {
                         texture_ids.push(image.id);
                     }
+                    offset
+                }
+                #[cfg(feature = "rtx_on")]
+                PendingFree::AccelerationStructure {
+                    handle,
+                    buffer,
+                    offset,
+                } => {
+                    self.context
+                        .acceleration_structure_pfn
+                        .destroy_acceleration_structure(handle, None);
+                    self.context.device.destroy_buffer(buffer, None);
                     offset
                 }
             };
@@ -594,10 +668,22 @@ enum TransferDestination {
 }
 
 pub enum PendingFree {
-    Buffer { handle: vk::Buffer, offset: Offset },
+    Buffer {
+        handle: vk::Buffer,
+        offset: Offset,
+    },
     Slab(Offset),
     Readback(ReadbackBuffer),
-    Image { image: crate::Image, offset: Offset },
+    Image {
+        image: crate::Image,
+        offset: Offset,
+    },
+    #[cfg(feature = "rtx_on")]
+    AccelerationStructure {
+        handle: vk::AccelerationStructureKHR,
+        buffer: vk::Buffer,
+        offset: Offset,
+    },
 }
 
 pub struct ReadbackBuffer {
@@ -680,6 +766,18 @@ where
     }
 }
 
+/// An acceleration structure and the pool buffer it lives in.
+#[cfg(feature = "rtx_on")]
+pub struct AccelerationStructureAllocation {
+    pub handle: vk::AccelerationStructureKHR,
+    /// The acceleration structure's own address: what instances and shaders reference.
+    pub device_address: vk::DeviceAddress,
+    pub size: vk::DeviceSize,
+    /// The backing buffer, for memory barriers.
+    pub buffer: vk::Buffer,
+    global_offset: Offset,
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{Context, Core, LazyVulkan};
@@ -687,6 +785,20 @@ mod tests {
     use std::{sync::Arc, u64};
 
     const READBACK_MEMORY_SIZE: u64 = 500 << 20;
+
+    #[cfg(feature = "rtx_on")]
+    #[test]
+    fn acceleration_structures_allocate_over_the_pool_and_free() {
+        let mut lazy_vulkan = get_vulkan();
+        let allocator = &mut lazy_vulkan.renderer.allocator;
+        let allocation = allocator
+            .allocate_acceleration_structure(vk::AccelerationStructureTypeKHR::BOTTOM_LEVEL, 4096)
+            .unwrap();
+        assert_ne!(allocation.device_address, 0);
+        allocator.free_acceleration_structure(allocation);
+        allocator.submission_submitted();
+        unsafe { allocator.submission_complete() };
+    }
 
     #[test]
     fn test_allocate_single_buffer_roundtrip() {

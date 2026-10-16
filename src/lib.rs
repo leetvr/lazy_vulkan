@@ -1,4 +1,6 @@
 pub use crate::swapchain::Drawable;
+#[cfg(feature = "rtx_on")]
+pub use allocator::AccelerationStructureAllocation;
 pub use allocator::{
     AllocationError, Allocator, BufferAllocation, ReadbackBuffer, SlabUpload, TransferToken,
 };
